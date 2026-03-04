@@ -68,6 +68,27 @@ You can also run:
 make install
 ```
 
+### One-command deploy to multiple devices
+
+Use [scripts/deploy.sh](./scripts/deploy.sh) from your machine with Go installed.
+It auto-detects each target host OS/ARCH, builds matching binaries, copies them, and installs into PATH.
+
+```bash
+# direct host list
+./scripts/deploy.sh root@online-boutique-k8s01 root@online-boutique-k8s02
+
+# hosts file + sudo on targets
+./scripts/deploy.sh --hosts-file ./hosts.txt --sudo
+```
+
+`hosts.txt` format:
+
+```txt
+# one host per line
+root@online-boutique-k8s01
+root@online-boutique-k8s02
+```
+
 ## Configuration
 
 Optional file: `~/.khelper.yaml`
