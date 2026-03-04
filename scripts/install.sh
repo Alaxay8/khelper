@@ -117,10 +117,22 @@ if [ "$MODE" = "auto" ] || [ "$MODE" = "local" ]; then
     SRC="$LOCAL_ASSET_CWD_DIST"
   elif [ -f "$LOCAL_ASSET_REPO_DIST" ]; then
     SRC="$LOCAL_ASSET_REPO_DIST"
-  elif [ -f "$LOCAL_ASSET_CWD_BIN" ] && is_runnable_binary "$LOCAL_ASSET_CWD_BIN"; then
-    SRC="$LOCAL_ASSET_CWD_BIN"
-  elif [ -f "$LOCAL_ASSET_REPO_BIN" ] && is_runnable_binary "$LOCAL_ASSET_REPO_BIN"; then
-    SRC="$LOCAL_ASSET_REPO_BIN"
+  elif [ -f "$LOCAL_ASSET_CWD_BIN" ]; then
+    if is_runnable_binary "$LOCAL_ASSET_CWD_BIN"; then
+      SRC="$LOCAL_ASSET_CWD_BIN"
+    else
+      echo "ERROR: local binary exists but is not runnable on this host: $LOCAL_ASSET_CWD_BIN" >&2
+      echo "Check architecture: file $LOCAL_ASSET_CWD_BIN && uname -m" >&2
+      exit 1
+    fi
+  elif [ -f "$LOCAL_ASSET_REPO_BIN" ]; then
+    if is_runnable_binary "$LOCAL_ASSET_REPO_BIN"; then
+      SRC="$LOCAL_ASSET_REPO_BIN"
+    else
+      echo "ERROR: local binary exists but is not runnable on this host: $LOCAL_ASSET_REPO_BIN" >&2
+      echo "Check architecture: file $LOCAL_ASSET_REPO_BIN && uname -m" >&2
+      exit 1
+    fi
   elif [ "$MODE" = "local" ]; then
     echo "ERROR: local asset not found for '${ASSET_NAME}'." >&2
     echo "Checked paths:" >&2
