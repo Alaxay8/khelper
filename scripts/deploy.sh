@@ -77,6 +77,10 @@ read_hosts_file() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    help|h)
+      usage
+      exit 0
+      ;;
     --hosts-file)
       HOSTS_FILE="$2"
       shift 2
