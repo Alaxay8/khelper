@@ -6,6 +6,14 @@ INSTALL_DIR="/usr/local/bin"
 REPO="alexey/khelper"
 VERSION="latest"
 MODE="auto" # auto | local | release
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"
+REPO_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd -P)"
+
+is_runnable_binary() {
+  candidate="$1"
+  chmod +x "$candidate" >/dev/null 2>&1 || true
+  "$candidate" version >/dev/null 2>&1
+}
 
 usage() {
   cat <<USAGE
@@ -18,8 +26,8 @@ Options:
   --repo <owner/repo>   GitHub repo for release downloads (default: alexey/khelper)
   --version <tag|latest> Release tag or 'latest' (default: latest)
   --mode <auto|local|release>
-                        auto: use ./dist asset if present, otherwise GitHub release
-                        local: require local asset in ./dist
+                        auto: use local asset if present, otherwise GitHub release
+                        local: require local asset only (no download)
                         release: download from GitHub release
   --help                Show this help
 
@@ -91,7 +99,10 @@ case "$ARCH_RAW" in
 esac
 
 ASSET_NAME="${BINARY_NAME}_${OS}_${ARCH}"
-LOCAL_ASSET="./dist/${ASSET_NAME}"
+LOCAL_ASSET_CWD_DIST="$(pwd)/dist/${ASSET_NAME}"
+LOCAL_ASSET_REPO_DIST="${REPO_ROOT}/dist/${ASSET_NAME}"
+LOCAL_ASSET_CWD_BIN="$(pwd)/${BINARY_NAME}"
+LOCAL_ASSET_REPO_BIN="${REPO_ROOT}/${BINARY_NAME}"
 
 TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t khelper-install)"
 cleanup() {
@@ -102,10 +113,21 @@ trap cleanup EXIT INT TERM
 SRC=""
 
 if [ "$MODE" = "auto" ] || [ "$MODE" = "local" ]; then
-  if [ -f "$LOCAL_ASSET" ]; then
-    SRC="$LOCAL_ASSET"
+  if [ -f "$LOCAL_ASSET_CWD_DIST" ]; then
+    SRC="$LOCAL_ASSET_CWD_DIST"
+  elif [ -f "$LOCAL_ASSET_REPO_DIST" ]; then
+    SRC="$LOCAL_ASSET_REPO_DIST"
+  elif [ -f "$LOCAL_ASSET_CWD_BIN" ] && is_runnable_binary "$LOCAL_ASSET_CWD_BIN"; then
+    SRC="$LOCAL_ASSET_CWD_BIN"
+  elif [ -f "$LOCAL_ASSET_REPO_BIN" ] && is_runnable_binary "$LOCAL_ASSET_REPO_BIN"; then
+    SRC="$LOCAL_ASSET_REPO_BIN"
   elif [ "$MODE" = "local" ]; then
-    echo "ERROR: local asset not found: $LOCAL_ASSET" >&2
+    echo "ERROR: local asset not found for '${ASSET_NAME}'." >&2
+    echo "Checked paths:" >&2
+    echo "  - ${LOCAL_ASSET_CWD_DIST}" >&2
+    echo "  - ${LOCAL_ASSET_REPO_DIST}" >&2
+    echo "  - ${LOCAL_ASSET_CWD_BIN}" >&2
+    echo "  - ${LOCAL_ASSET_REPO_BIN}" >&2
     echo "Build release artifacts first: make release" >&2
     exit 1
   fi
@@ -127,6 +149,10 @@ if [ -z "$SRC" ]; then
   echo "Downloading ${URL}"
   if ! curl -fsSL "$URL" -o "$SRC"; then
     echo "ERROR: failed to download release asset '${ASSET_NAME}' from ${URL}" >&2
+    echo "Hint: if you already built the binary locally, use --mode local." >&2
+    echo "Expected local files:" >&2
+    echo "  - ${LOCAL_ASSET_REPO_DIST}" >&2
+    echo "  - ${LOCAL_ASSET_REPO_BIN}" >&2
     exit 1
   fi
 fi

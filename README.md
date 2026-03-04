@@ -18,7 +18,7 @@ It uses `client-go` directly (no shelling out to `kubectl`), reads kubeconfig th
 ### Go install
 
 ```bash
-go install github.com/alexey/khelper@latest
+go install github.com/alexay8/khelper@latest
 ```
 
 ### Build locally
@@ -192,3 +192,4 @@ make release
 - `3` ambiguous target (requires `--pick`)
 - `4` usage/config error
 - `5` unavailable dependency (for example metrics API not installed)
+
