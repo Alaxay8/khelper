@@ -18,7 +18,7 @@ It uses `client-go` directly (no shelling out to `kubectl`), reads kubeconfig th
 ### Go install
 
 ```bash
-go install github.com/alexay8/khelper@latest
+go install github.com/alexey/khelper@latest
 ```
 
 ### Build locally
@@ -28,9 +28,39 @@ make build
 ./bin/khelper version
 ```
 
-### Download a release artifact
+### Build all target binaries (macOS + Linux, amd64 + arm64)
 
-Use the binaries produced by `make release` (linux/darwin amd64/arm64) from your release pipeline.
+```bash
+make release
+ls -1 dist/
+```
+
+### Install helper script (auto-detect OS/ARCH)
+
+The repository includes [scripts/install.sh](./scripts/install.sh). It supports:
+
+- Linux and macOS
+- `amd64` and `arm64`
+- Local install from `./dist` or download from GitHub Releases
+
+Examples:
+
+```bash
+# Use local dist/khelper_<os>_<arch> if present, otherwise release download
+./scripts/install.sh
+
+# Force install from local dist artifacts
+./scripts/install.sh --mode local
+
+# Install a specific release tag
+./scripts/install.sh --mode release --version v0.1.0
+```
+
+You can also run:
+
+```bash
+make install
+```
 
 ## Configuration
 
@@ -162,4 +192,3 @@ make release
 - `3` ambiguous target (requires `--pick`)
 - `4` usage/config error
 - `5` unavailable dependency (for example metrics API not installed)
-

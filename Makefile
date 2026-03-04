@@ -6,7 +6,7 @@ DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -X 'github.com/alexey/khelper/cmd.Version=$(VERSION)' -X 'github.com/alexey/khelper/cmd.Commit=$(COMMIT)' -X 'github.com/alexey/khelper/cmd.BuildDate=$(DATE)'
 GOFILES := $(shell find . -type f -name '*.go' -not -path './vendor/*')
 
-.PHONY: build test lint release
+.PHONY: build test lint release install
 
 build:
 	@mkdir -p bin
@@ -28,3 +28,6 @@ release:
 			GOOS=$${goos} GOARCH=$${goarch} CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o $$out .; \
 		done; \
 	done
+
+install:
+	./scripts/install.sh --mode auto
