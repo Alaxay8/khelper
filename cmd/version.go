@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"runtime/debug"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -28,6 +30,7 @@ func newVersionCmd() *cobra.Command {
 func initBuildInfoDefaults() {
 	bi, ok := debug.ReadBuildInfo()
 	if !ok {
+		setFallbackBuildDate()
 		return
 	}
 	if Version == "dev" && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
@@ -49,4 +52,20 @@ func initBuildInfoDefaults() {
 			}
 		}
 	}
+	setFallbackBuildDate()
+}
+
+func setFallbackBuildDate() {
+	if BuildDate != "unknown" {
+		return
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	fi, err := os.Stat(exe)
+	if err != nil {
+		return
+	}
+	BuildDate = fi.ModTime().UTC().Format(time.RFC3339)
 }
