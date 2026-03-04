@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/alexey/khelper/internal/kube"
-	"github.com/alexey/khelper/pkg/output"
+	"github.com/alaxay8/khelper/internal/kube"
+	"github.com/alaxay8/khelper/pkg/output"
 	"github.com/spf13/cobra"
 )
 

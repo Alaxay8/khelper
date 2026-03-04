@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/alexey/khelper/internal/config"
-	"github.com/alexey/khelper/internal/kube"
+	"github.com/alaxay8/khelper/internal/config"
+	"github.com/alaxay8/khelper/internal/kube"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )

@@ -1,4 +1,4 @@
-module github.com/alexey/khelper
+module github.com/alaxay8/khelper
 
 go 1.22.0
 

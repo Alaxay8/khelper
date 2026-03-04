@@ -4,7 +4,7 @@ set -eu
 BINARY_NAME="khelper"
 MODE="auto"
 INSTALL_DIR=""
-REPO="alexey/khelper"
+REPO="alaxay8/khelper"
 VERSION="latest"
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"
@@ -25,7 +25,7 @@ Modes:
 Options:
   --install-dir <dir>      Install directory (default: OS-dependent)
   --mode <auto|local|build|release>
-  --repo <owner/repo>      GitHub repo for release downloads (default: alexey/khelper)
+  --repo <owner/repo>      GitHub repo for release downloads (default: alaxay8/khelper)
   --version <tag|latest>   Release tag or latest (default: latest)
   --help                   Show this help
 

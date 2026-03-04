@@ -18,7 +18,7 @@ It uses `client-go` directly (no shelling out to `kubectl`), reads kubeconfig th
 ### Go install
 
 ```bash
-go install github.com/alexey/khelper@latest
+go install github.com/alaxay8/khelper@latest
 ```
 
 ### Build locally

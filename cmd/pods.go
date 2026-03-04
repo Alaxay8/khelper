@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/alexey/khelper/internal/kube"
-	"github.com/alexey/khelper/pkg/output"
+	"github.com/alaxay8/khelper/internal/kube"
+	"github.com/alaxay8/khelper/pkg/output"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"

@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/alexey/khelper/internal/kube"
+	"github.com/alaxay8/khelper/internal/kube"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 )
