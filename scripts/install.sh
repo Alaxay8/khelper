@@ -2,7 +2,7 @@
 set -eu
 
 BINARY_NAME="khelper"
-MODE="auto" # auto | local | build | release
+MODE="auto"
 INSTALL_DIR=""
 REPO="alexey/khelper"
 VERSION="latest"
@@ -14,15 +14,10 @@ usage() {
   cat <<USAGE
 Usage: $0 [options]
 
-Install khelper for the current OS/ARCH.
-
-Default behavior (mode=auto):
-  1) use local binary artifacts
-  2) build from source with Go (if available)
-  3) do NOT download from GitHub
+Install khelper for the current OS and architecture.
 
 Modes:
-  auto    local artifacts, then local build
+  auto    local artifacts, then local build (installs Go on supported systems if missing)
   local   local artifacts only
   build   local build only
   release download from GitHub Releases only
@@ -31,7 +26,7 @@ Options:
   --install-dir <dir>      Install directory (default: OS-dependent)
   --mode <auto|local|build|release>
   --repo <owner/repo>      GitHub repo for release downloads (default: alexey/khelper)
-  --version <tag|latest>   Release tag or 'latest' (default: latest)
+  --version <tag|latest>   Release tag or latest (default: latest)
   --help                   Show this help
 
 Examples:
@@ -47,10 +42,62 @@ die() {
   exit 1
 }
 
+has_cmd() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+run_privileged() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  elif has_cmd sudo; then
+    sudo "$@"
+  else
+    die "need root privileges for: $*"
+  fi
+}
+
 runnable_binary() {
   candidate="$1"
   chmod +x "$candidate" >/dev/null 2>&1 || true
   "$candidate" version >/dev/null 2>&1
+}
+
+ensure_go() {
+  if has_cmd go; then
+    return 0
+  fi
+
+  if [ "$OS" = "darwin" ]; then
+    if has_cmd brew; then
+      run_privileged brew update
+      run_privileged brew install go
+    else
+      die "Go is not installed. Install it manually on macOS: brew install go"
+    fi
+  elif [ "$OS" = "linux" ]; then
+    if has_cmd apt-get; then
+      run_privileged apt-get update
+      run_privileged apt-get install -y golang-go
+    elif has_cmd dnf; then
+      run_privileged dnf install -y golang
+    elif has_cmd yum; then
+      run_privileged yum install -y golang
+    elif has_cmd zypper; then
+      run_privileged zypper --non-interactive install go
+    elif has_cmd apk; then
+      run_privileged apk add --no-cache go
+    elif has_cmd pacman; then
+      run_privileged pacman -Sy --noconfirm go
+    else
+      die "Go is not installed and no supported package manager was found"
+    fi
+  else
+    die "Go bootstrap is not supported on this OS"
+  fi
+
+  if ! has_cmd go; then
+    die "failed to install Go"
+  fi
 }
 
 while [ "$#" -gt 0 ]; do
@@ -71,7 +118,7 @@ while [ "$#" -gt 0 ]; do
       VERSION="$2"
       shift 2
       ;;
-    --help|-h)
+    --help|-h|help)
       usage
       exit 0
       ;;
@@ -92,7 +139,7 @@ ARCH_RAW="$(uname -m)"
 case "$OS_RAW" in
   Linux) OS="linux" ;;
   Darwin) OS="darwin" ;;
-  *) die "unsupported OS '$OS_RAW' (supported: Linux, Darwin)" ;;
+  *) die "unsupported OS '$OS_RAW'" ;;
 esac
 
 case "$ARCH_RAW" in
@@ -148,37 +195,25 @@ if [ "$MODE" = "auto" ] || [ "$MODE" = "local" ]; then
   - $LOCAL_ASSET_CWD_DIST
   - $LOCAL_ASSET_REPO_DIST
   - $LOCAL_ASSET_CWD_BIN
-  - $LOCAL_ASSET_REPO_BIN
-Tip: build on a machine with Go:
-  GOOS=$OS GOARCH=$ARCH CGO_ENABLED=0 go build -o khelper ."
+  - $LOCAL_ASSET_REPO_BIN"
   fi
 fi
 
 if [ -z "$SRC" ] && { [ "$MODE" = "auto" ] || [ "$MODE" = "build" ]; }; then
-  if ! command -v go >/dev/null 2>&1; then
-    if [ "$MODE" = "build" ]; then
-      die "Go is required for --mode build"
-    fi
-  elif [ ! -f "${REPO_ROOT}/go.mod" ]; then
-    if [ "$MODE" = "build" ]; then
-      die "go.mod not found under ${REPO_ROOT}"
-    fi
-  else
-    BUILD_OUT="${TMP_DIR}/${BINARY_NAME}"
-    echo "Building ${BINARY_NAME} for ${OS}/${ARCH} from source..."
-    (
-      cd "$REPO_ROOT"
-      GOOS="$OS" GOARCH="$ARCH" CGO_ENABLED=0 go build -o "$BUILD_OUT" .
-    )
-    if ! runnable_binary "$BUILD_OUT"; then
-      die "built binary is not runnable: $BUILD_OUT"
-    fi
-    SRC="$BUILD_OUT"
-  fi
+  [ -f "${REPO_ROOT}/go.mod" ] || die "go.mod not found under ${REPO_ROOT}"
+  ensure_go
+  BUILD_OUT="${TMP_DIR}/${BINARY_NAME}"
+  echo "Building ${BINARY_NAME} for ${OS}/${ARCH}..."
+  (
+    cd "$REPO_ROOT"
+    GOOS="$OS" GOARCH="$ARCH" CGO_ENABLED=0 go build -o "$BUILD_OUT" .
+  )
+  runnable_binary "$BUILD_OUT" || die "built binary is not runnable: $BUILD_OUT"
+  SRC="$BUILD_OUT"
 fi
 
 if [ -z "$SRC" ] && [ "$MODE" = "release" ]; then
-  command -v curl >/dev/null 2>&1 || die "curl is required for release downloads"
+  has_cmd curl || die "curl is required for release downloads"
   if [ "$VERSION" = "latest" ]; then
     URL="https://github.com/${REPO}/releases/latest/download/${ASSET_NAME}"
   else
@@ -190,31 +225,18 @@ if [ -z "$SRC" ] && [ "$MODE" = "release" ]; then
   chmod +x "$SRC"
 fi
 
-if [ -z "$SRC" ]; then
-  die "no install source found. Use one of:
-  1) Put a runnable binary at ${LOCAL_ASSET_REPO_BIN}
-  2) Build artifacts in dist/: make release
-  3) Install Go and run this script (mode=auto/build)
-  4) Use --mode release after publishing GitHub release assets"
-fi
+[ -n "$SRC" ] || die "no install source found"
 
 DEST="${INSTALL_DIR}/${BINARY_NAME}"
 
 if [ ! -d "$INSTALL_DIR" ]; then
-  if mkdir -p "$INSTALL_DIR" 2>/dev/null; then :
-  elif command -v sudo >/dev/null 2>&1; then
-    sudo mkdir -p "$INSTALL_DIR"
-  else
-    die "cannot create install dir '$INSTALL_DIR' (try root/sudo or --install-dir)"
-  fi
+  run_privileged mkdir -p "$INSTALL_DIR"
 fi
 
 if [ -w "$INSTALL_DIR" ]; then
   install -m 0755 "$SRC" "$DEST"
-elif command -v sudo >/dev/null 2>&1; then
-  sudo install -m 0755 "$SRC" "$DEST"
 else
-  die "no write permission to '$INSTALL_DIR' and sudo is unavailable"
+  run_privileged install -m 0755 "$SRC" "$DEST"
 fi
 
 echo "Installed ${BINARY_NAME} to ${DEST}"

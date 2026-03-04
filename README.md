@@ -18,7 +18,7 @@ It uses `client-go` directly (no shelling out to `kubectl`), reads kubeconfig th
 ### Go install
 
 ```bash
-go install github.com/alexay8/khelper@latest
+go install github.com/alexey/khelper@latest
 ```
 
 ### Build locally
@@ -40,25 +40,17 @@ ls -1 dist/
 The repository includes [scripts/install.sh](./scripts/install.sh). It supports:
 
 - Linux and macOS
-- `amd64` and `arm64`
+- `amd64`, `arm64`, `arm`, `ppc64le`, `s390x` where supported
 - Local install from `./dist` or from local `./khelper`
-- Optional source build (`go build`) when Go is available
+- Source build (`go build`) with Go auto-install on supported Linux package managers
 - Optional GitHub Releases download in explicit release mode
 
 Examples:
 
 ```bash
-# Auto mode (default):
-# 1) local artifacts, 2) local build (if Go), no GitHub download
 ./scripts/install.sh
-
-# Force install from local dist artifacts
 ./scripts/install.sh --mode local
-
-# Force build from source on current machine
 ./scripts/install.sh --mode build
-
-# Install a specific release tag
 ./scripts/install.sh --mode release --version v0.1.0
 ```
 
@@ -66,27 +58,6 @@ You can also run:
 
 ```bash
 make install
-```
-
-### One-command deploy to multiple devices
-
-Use [scripts/deploy.sh](./scripts/deploy.sh) from your machine with Go installed.
-It auto-detects each target host OS/ARCH, builds matching binaries, copies them, and installs into PATH.
-
-```bash
-# direct host list
-./scripts/deploy.sh root@online-boutique-k8s01 root@online-boutique-k8s02
-
-# hosts file + sudo on targets
-./scripts/deploy.sh --hosts-file ./hosts.txt --sudo
-```
-
-`hosts.txt` format:
-
-```txt
-# one host per line
-root@online-boutique-k8s01
-root@online-boutique-k8s02
 ```
 
 ## Configuration
