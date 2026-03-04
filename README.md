@@ -60,6 +60,18 @@ You can also run:
 make install
 ```
 
+### Uninstall
+
+```bash
+./scripts/uninstall.sh
+```
+
+Minimal uninstall (keep config and local build artifacts):
+
+```bash
+./scripts/uninstall.sh --minimal
+```
+
 ## Configuration
 
 Optional file: `~/.khelper.yaml`
