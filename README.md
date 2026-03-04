@@ -19,6 +19,29 @@ It uses `client-go` directly (no shelling out to `kubectl`), reads kubeconfig th
 
 ```bash
 go install github.com/alaxay8/khelper@latest
+
+BIN_DIR="$(go env GOBIN)"
+[ -z "$BIN_DIR" ] && BIN_DIR="$(go env GOPATH)/bin"
+ls -l "$BIN_DIR/khelper"
+"$BIN_DIR/khelper" version
+```
+
+Install system-wide:
+
+```bash
+sudo install -m 755 "$BIN_DIR/khelper" /usr/local/bin/khelper
+hash -r
+khelper version
+```
+
+Install without sudo:
+
+```bash
+mkdir -p "$HOME/.local/bin"
+install -m 755 "$BIN_DIR/khelper" "$HOME/.local/bin/khelper"
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+source "$HOME/.bashrc"
+khelper version
 ```
 
 ### Build locally
@@ -54,6 +77,9 @@ Examples:
 ./scripts/install.sh --mode release --version v0.1.0
 ```
 
+On Linux, `auto` mode can install Go via package manager (`apt`, `dnf`, `yum`, `zypper`, `apk`, `pacman`) if Go is missing.
+It requires root/sudo privileges and internet access.
+
 You can also run:
 
 ```bash
@@ -71,6 +97,30 @@ Minimal uninstall (keep config and local build artifacts):
 ```bash
 ./scripts/uninstall.sh --minimal
 ```
+
+### Troubleshooting
+
+`khelper: command not found` after `go install`:
+
+```bash
+BIN_DIR="$(go env GOBIN)"
+[ -z "$BIN_DIR" ] && BIN_DIR="$(go env GOPATH)/bin"
+echo "$BIN_DIR"
+ls -l "$BIN_DIR/khelper"
+```
+
+`cannot execute binary file: Exec format error`:
+
+- Binary OS/architecture does not match host.
+- Check with:
+
+```bash
+uname -s
+uname -m
+file "$(command -v khelper || echo /usr/local/bin/khelper)"
+```
+
+- Rebuild/install for the correct target architecture.
 
 ## Configuration
 
@@ -172,18 +222,10 @@ Given a target like `payment`:
 
 1. If `--kind` is set, resolution is restricted to that kind.
 2. Default kind order is: `Deployment -> StatefulSet -> Pod`.
-3. Namespace resolution order:
-  - `--namespace`
-  - current context namespace from kubeconfig
-  - `default`
-4. Matching order per kind:
-  - `metadata.name == target`
-  - selector `app=<target>`
-  - selector `app.kubernetes.io/name=<target>`
+3. Namespace resolution order: `--namespace`, current context namespace from kubeconfig, then `default`.
+4. Matching order per kind: `metadata.name == target`, then selector `app=<target>`, then selector `app.kubernetes.io/name=<target>`.
 5. Multiple matches require `--pick=N`.
-6. For logs/shell pod resolution:
-  - choose newest `Running` pod by `startTime`
-  - if none running, choose newest pod and warn
+6. For logs/shell pod resolution, choose newest `Running` pod by `startTime`; if none are running, choose the newest pod and warn.
 
 ## Development
 
@@ -202,6 +244,3 @@ make release
 - `3` ambiguous target (requires `--pick`)
 - `4` usage/config error
 - `5` unavailable dependency (for example metrics API not installed)
-
-
-

@@ -7,9 +7,8 @@ import (
 )
 
 var (
-	Version   = "dev"
-	Commit    = "none"
-	BuildDate = "unknown"
+	Version   = "0.1.0"
+	BuildDate = "04 Mar 2026"
 )
 
 func newVersionCmd() *cobra.Command {
