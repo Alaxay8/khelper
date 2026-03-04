@@ -18,7 +18,7 @@ It uses `client-go` directly (no shelling out to `kubectl`), reads kubeconfig th
 ### Go install
 
 ```bash
-go install github.com/alexey/khelper@latest
+go install github.com/alexay8/khelper@latest
 ```
 
 ### Build locally
@@ -133,17 +133,17 @@ Given a target like `payment`:
 1. If `--kind` is set, resolution is restricted to that kind.
 2. Default kind order is: `Deployment -> StatefulSet -> Pod`.
 3. Namespace resolution order:
-   - `--namespace`
-   - current context namespace from kubeconfig
-   - `default`
+  - `--namespace`
+  - current context namespace from kubeconfig
+  - `default`
 4. Matching order per kind:
-   - `metadata.name == target`
-   - selector `app=<target>`
-   - selector `app.kubernetes.io/name=<target>`
+  - `metadata.name == target`
+  - selector `app=<target>`
+  - selector `app.kubernetes.io/name=<target>`
 5. Multiple matches require `--pick=N`.
 6. For logs/shell pod resolution:
-   - choose newest `Running` pod by `startTime`
-   - if none running, choose newest pod and warn
+  - choose newest `Running` pod by `startTime`
+  - if none running, choose newest pod and warn
 
 ## Development
 
@@ -162,3 +162,4 @@ make release
 - `3` ambiguous target (requires `--pick`)
 - `4` usage/config error
 - `5` unavailable dependency (for example metrics API not installed)
+
