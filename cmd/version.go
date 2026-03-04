@@ -61,10 +61,12 @@ func setFallbackBuildDate() {
 	}
 	exe, err := os.Executable()
 	if err != nil {
+		BuildDate = time.Now().UTC().Format(time.RFC3339)
 		return
 	}
 	fi, err := os.Stat(exe)
 	if err != nil {
+		BuildDate = time.Now().UTC().Format(time.RFC3339)
 		return
 	}
 	BuildDate = fi.ModTime().UTC().Format(time.RFC3339)
