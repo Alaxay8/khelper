@@ -41,16 +41,22 @@ The repository includes [scripts/install.sh](./scripts/install.sh). It supports:
 
 - Linux and macOS
 - `amd64` and `arm64`
-- Local install from `./dist` or download from GitHub Releases
+- Local install from `./dist` or from local `./khelper`
+- Optional source build (`go build`) when Go is available
+- Optional GitHub Releases download in explicit release mode
 
 Examples:
 
 ```bash
-# Use local dist/khelper_<os>_<arch> if present, otherwise release download
+# Auto mode (default):
+# 1) local artifacts, 2) local build (if Go), no GitHub download
 ./scripts/install.sh
 
 # Force install from local dist artifacts
 ./scripts/install.sh --mode local
+
+# Force build from source on current machine
+./scripts/install.sh --mode build
 
 # Install a specific release tag
 ./scripts/install.sh --mode release --version v0.1.0
@@ -192,4 +198,3 @@ make release
 - `3` ambiguous target (requires `--pick`)
 - `4` usage/config error
 - `5` unavailable dependency (for example metrics API not installed)
-
