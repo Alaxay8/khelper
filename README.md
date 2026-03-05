@@ -33,6 +33,8 @@ khelper version
 Install without sudo:
 
 ```bash
+go install github.com/alaxay8/khelper@latest
+
 BIN_DIR="$(go env GOBIN)"
 [ -z "$BIN_DIR" ] && BIN_DIR="$(go env GOPATH)/bin"
 mkdir -p "$HOME/.local/bin"
@@ -54,6 +56,7 @@ khelper version
 ```
 
 `scripts/install.sh` sets up bash completion automatically:
+
 - user-level completion at `~/.local/share/bash-completion/completions/khelper` + `~/.bashrc` source line
 - global completion at `/etc/bash_completion.d/khelper` when privileges are available
 
@@ -340,3 +343,4 @@ make release
 - `4` usage/config error
 - `5` unavailable dependency (for example metrics API not installed)
 - `6` diagnostics findings detected by `doctor` (`warning`/`error` severity)
+
