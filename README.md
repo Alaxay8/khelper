@@ -7,6 +7,7 @@ It uses `client-go` directly (no shelling out to `kubectl`), reads kubeconfig th
 ## Features
 
 - Short commands for pods, logs, restart, shell, metrics, context, and namespace workflows
+- `doctor` diagnostics command for fast root-cause hints on broken workloads/pods
 - Deterministic target resolution (`deployment -> statefulset -> pod` by default)
 - Config via `~/.khelper.yaml`, environment variables (`KHELPER_*`), and flags
 - Table output by default with optional JSON output (`-o json`)
@@ -196,6 +197,56 @@ khelper restart payment
 khelper restart payment --kind=deployment --timeout=10m
 ```
 
+### Doctor (diagnostics)
+
+```bash
+khelper doctor payment
+khelper doctor payment --kind=deployment --since=2h --logs-tail=200
+khelper doctor payment --kind=statefulset --pick=2 --container=api
+khelper doctor payment -o json
+```
+
+Flags:
+
+- `--kind deployment|statefulset|pod`
+- `--pick N` (1-based choice when resolver finds multiple matches)
+- `--since 1h` (window for warning events analysis)
+- `--logs-tail 120` (tail lines from selected pod container to include as evidence, `0` disables)
+- `--container NAME` (container for log evidence)
+- `--output table|json` (or global `-o table|json`)
+
+`table` output format:
+
+```
+SEVERITY  CHECK                 OBJECT                   MESSAGE                                                            ACTION
+ERROR     container-state       pod/payment-6f5db        Container app is waiting with CrashLoopBackOff: back-off restarting  Inspect container logs and startup config to fix repeated crashes
+WARNING   warning-events        pod/payment-6f5db        BackOff: Back-off restarting failed container                         Review this warning event and correlate with pod/workload status
+```
+
+`json` output format:
+
+```json
+[
+  {
+    "severity": "error",
+    "check": "container-state",
+    "object": "pod/payment-6f5db",
+    "message": "Container app is waiting with CrashLoopBackOff",
+    "action": "Inspect container logs and startup config to fix repeated crashes",
+    "evidence": {
+      "reason": "CrashLoopBackOff",
+      "container": "app",
+      "restartCount": 8
+    }
+  }
+]
+```
+
+Exit code interpretation for `doctor`:
+
+- `0`: no warning/error findings
+- `6`: at least one `warning` or `error` finding detected
+
 ### Shell
 
 ```bash
@@ -225,7 +276,7 @@ Given a target like `payment`:
 3. Namespace resolution order: `--namespace`, current context namespace from kubeconfig, then `default`.
 4. Matching order per kind: `metadata.name == target`, then selector `app=<target>`, then selector `app.kubernetes.io/name=<target>`.
 5. Multiple matches require `--pick=N`.
-6. For logs/shell pod resolution, choose newest `Running` pod by `startTime`; if none are running, choose the newest pod and warn.
+6. For logs/shell/doctor pod resolution, choose newest `Running` pod by `startTime`; if none are running, choose the newest pod and warn.
 
 ## Development
 
@@ -244,3 +295,4 @@ make release
 - `3` ambiguous target (requires `--pick`)
 - `4` usage/config error
 - `5` unavailable dependency (for example metrics API not installed)
+- `6` diagnostics findings detected by `doctor` (`warning`/`error` severity)
