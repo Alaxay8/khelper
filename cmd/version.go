@@ -85,4 +85,3 @@ func setFallbackBuildDate() {
 	}
 	BuildDate = fi.ModTime().UTC().Format(time.RFC3339)
 }
-
