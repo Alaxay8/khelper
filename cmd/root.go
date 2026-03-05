@@ -65,6 +65,7 @@ var (
 			if err := loadRuntimeConfig(); err != nil {
 				return err
 			}
+			maybeAutoInstallCompletion(cmd)
 			return nil
 		},
 	}
@@ -111,6 +112,7 @@ func init() {
 
 	rootCmd.AddCommand(
 		newVersionCmd(),
+		newCompletionInstallCmd(),
 		newContextCmd(),
 		newNamespaceCmd(),
 		newPodsCmd(),

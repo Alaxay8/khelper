@@ -152,6 +152,29 @@ Environment variables are also supported:
 
 ## Commands
 
+### Shell Completion
+
+`khelper` auto-installs completion on the first interactive run (unless `KHELPER_AUTO_COMPLETION=0`).
+If you want to install it explicitly:
+
+Install once (recommended):
+
+```bash
+khelper completion-install bash
+```
+
+or explicit custom path:
+
+```bash
+khelper completion-install --shell bash --path ~/.local/share/bash-completion/completions/khelper
+```
+
+Temporary completion for current shell session:
+
+```bash
+source <(khelper completion bash)
+```
+
 ### Version
 
 ```bash
