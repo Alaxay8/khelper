@@ -36,23 +36,37 @@ func initBuildInfoDefaults() {
 	if Version == "dev" && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
 		Version = bi.Main.Version
 	}
+	var revision string
+	var modified bool
 	for _, s := range bi.Settings {
 		switch s.Key {
 		case "vcs.revision":
+			revision = s.Value
 			if Commit == "none" && s.Value != "" {
-				if len(s.Value) > 7 {
-					Commit = s.Value[:7]
-				} else {
-					Commit = s.Value
-				}
+				Commit = shortRevision(s.Value)
 			}
 		case "vcs.time":
 			if BuildDate == "unknown" && s.Value != "" {
 				BuildDate = s.Value
 			}
+		case "vcs.modified":
+			modified = s.Value == "true"
+		}
+	}
+	if Version == "dev" && revision != "" {
+		Version = "dev-" + shortRevision(revision)
+		if modified {
+			Version += "-dirty"
 		}
 	}
 	setFallbackBuildDate()
+}
+
+func shortRevision(rev string) string {
+	if len(rev) > 7 {
+		return rev[:7]
+	}
+	return rev
 }
 
 func setFallbackBuildDate() {
