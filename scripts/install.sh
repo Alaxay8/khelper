@@ -203,10 +203,18 @@ if [ -z "$SRC" ] && { [ "$MODE" = "auto" ] || [ "$MODE" = "build" ]; }; then
   [ -f "${REPO_ROOT}/go.mod" ] || die "go.mod not found under ${REPO_ROOT}"
   ensure_go
   BUILD_OUT="${TMP_DIR}/${BINARY_NAME}"
+  BUILD_VERSION="dev"
+  BUILD_COMMIT="none"
+  BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if has_cmd git && git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    BUILD_VERSION="$(git -C "$REPO_ROOT" describe --tags --always --dirty 2>/dev/null || echo dev)"
+    BUILD_COMMIT="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo none)"
+  fi
+  LDFLAGS="-X github.com/alaxay8/khelper/cmd.Version=${BUILD_VERSION} -X github.com/alaxay8/khelper/cmd.Commit=${BUILD_COMMIT} -X github.com/alaxay8/khelper/cmd.BuildDate=${BUILD_DATE}"
   echo "Building ${BINARY_NAME} for ${OS}/${ARCH}..."
   (
     cd "$REPO_ROOT"
-    GOOS="$OS" GOARCH="$ARCH" CGO_ENABLED=0 go build -o "$BUILD_OUT" .
+    GOOS="$OS" GOARCH="$ARCH" CGO_ENABLED=0 go build -ldflags "$LDFLAGS" -o "$BUILD_OUT" .
   )
   runnable_binary "$BUILD_OUT" || die "built binary is not runnable: $BUILD_OUT"
   SRC="$BUILD_OUT"
