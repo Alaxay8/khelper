@@ -16,20 +16,15 @@ It uses `client-go` directly (no shelling out to `kubectl`), reads kubeconfig th
 
 ## Installation
 
-### Go install
+### Recommended for users (`go install`)
+
+Use this if you just want the CLI and do not need the source tree.
 
 ```bash
 go install github.com/alaxay8/khelper@latest
 
 BIN_DIR="$(go env GOBIN)"
 [ -z "$BIN_DIR" ] && BIN_DIR="$(go env GOPATH)/bin"
-ls -l "$BIN_DIR/khelper"
-"$BIN_DIR/khelper" version
-```
-
-Install system-wide:
-
-```bash
 sudo install -m 755 "$BIN_DIR/khelper" /usr/local/bin/khelper
 hash -r
 khelper version
@@ -38,6 +33,8 @@ khelper version
 Install without sudo:
 
 ```bash
+BIN_DIR="$(go env GOBIN)"
+[ -z "$BIN_DIR" ] && BIN_DIR="$(go env GOPATH)/bin"
 mkdir -p "$HOME/.local/bin"
 install -m 755 "$BIN_DIR/khelper" "$HOME/.local/bin/khelper"
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
@@ -45,14 +42,33 @@ source "$HOME/.bashrc"
 khelper version
 ```
 
-### Build locally
+### Recommended without manual steps (`scripts/install.sh`)
+
+Use this when you want install + bash completion setup in one command.
 
 ```bash
+git clone https://github.com/alaxay8/khelper.git
+cd khelper
+./scripts/install.sh
+khelper version
+```
+
+`scripts/install.sh` sets up bash completion automatically:
+- user-level completion at `~/.local/share/bash-completion/completions/khelper` + `~/.bashrc` source line
+- global completion at `/etc/bash_completion.d/khelper` when privileges are available
+
+### Build from source (development)
+
+Run this only inside the repository root (where `Makefile` and `go.mod` exist).
+
+```bash
+git clone https://github.com/alaxay8/khelper.git
+cd khelper
 make build
 ./bin/khelper version
 ```
 
-### Build all target binaries (macOS + Linux, amd64 + arm64)
+### Build release artifacts (maintainers)
 
 ```bash
 make release
@@ -86,10 +102,6 @@ You can also run:
 ```bash
 make install
 ```
-
-`scripts/install.sh` also sets up bash completion automatically:
-- user-level completion at `~/.local/share/bash-completion/completions/khelper` + `~/.bashrc` source line
-- global completion at `/etc/bash_completion.d/khelper` when privileges are available
 
 ### Uninstall
 
@@ -126,6 +138,11 @@ file "$(command -v khelper || echo /usr/local/bin/khelper)"
 ```
 
 - Rebuild/install for the correct target architecture.
+
+`make: *** No rule to make target 'build'.  Stop.`:
+
+- You are not in the repository root.
+- `make build` must be executed in the directory that contains `Makefile` and `go.mod`.
 
 ## Configuration
 
