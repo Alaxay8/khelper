@@ -22,8 +22,12 @@ jobs:
 
       - name: gofmt check
         run: |
-          files=$(find . -type f -name '*.go' -not -path './vendor/*')
-          test -z "$(gofmt -l $files)"
+          unformatted="$(find . -type f -name '*.go' -not -path './vendor/*' -print0 | xargs -0r gofmt -l)"
+          test -z "$unformatted" || {
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          }
 
       - name: go vet
         run: go vet ./...
