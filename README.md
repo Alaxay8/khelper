@@ -87,6 +87,10 @@ You can also run:
 make install
 ```
 
+`scripts/install.sh` also sets up bash completion automatically:
+- user-level completion at `~/.local/share/bash-completion/completions/khelper` + `~/.bashrc` source line
+- global completion at `/etc/bash_completion.d/khelper` when privileges are available
+
 ### Uninstall
 
 ```bash
