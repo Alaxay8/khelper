@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -149,7 +150,12 @@ func expandHome(path string) (string, error) {
 func writeShellCompletion(root *cobra.Command, shellName string, w io.Writer) error {
 	switch shellName {
 	case "bash":
-		return root.GenBashCompletionV2(w, true)
+		var script bytes.Buffer
+		if err := root.GenBashCompletionV2(&script, true); err != nil {
+			return err
+		}
+		_, err := io.WriteString(w, patchBashCompletionScript(script.String()))
+		return err
 	case "zsh":
 		return root.GenZshCompletion(w)
 	case "fish":
@@ -159,6 +165,44 @@ func writeShellCompletion(root *cobra.Command, shellName string, w io.Writer) er
 	default:
 		return fmt.Errorf("unsupported shell %q", shellName)
 	}
+}
+
+func patchBashCompletionScript(script string) string {
+	const compat = `
+# khelper compatibility for environments without the bash-completion package.
+if ! declare -F _get_comp_words_by_ref >/dev/null 2>&1; then
+_get_comp_words_by_ref()
+{
+    local curvar prevvar wordsvar cwordvar
+    curvar=${3:-cur}
+    prevvar=${4:-prev}
+    wordsvar=${5:-words}
+    cwordvar=${6:-cword}
+
+    printf -v "$curvar" '%s' "${COMP_WORDS[COMP_CWORD]}"
+    if (( COMP_CWORD > 0 )); then
+        printf -v "$prevvar" '%s' "${COMP_WORDS[COMP_CWORD-1]}"
+    else
+        printf -v "$prevvar" '%s' ""
+    fi
+    printf -v "$cwordvar" '%s' "${COMP_CWORD}"
+    eval "$wordsvar=(\"\${COMP_WORDS[@]}\")"
+}
+fi
+
+if ! declare -F _filedir >/dev/null 2>&1; then
+_filedir()
+{
+    local mode="$1"
+    if [[ "$mode" == "-d" ]]; then
+        COMPREPLY=( $(compgen -d -- "$cur") )
+    else
+        COMPREPLY=( $(compgen -f -- "$cur") )
+    fi
+}
+fi
+`
+	return script + compat
 }
 
 func printCompletionHint(w io.Writer, shellName, installPath string) {

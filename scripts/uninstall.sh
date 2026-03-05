@@ -68,6 +68,32 @@ remove_path() {
   removed=$((removed + 1))
 }
 
+remove_line_if_present() {
+  file="$1"
+  line="$2"
+  if [ ! -f "$file" ]; then
+    return 0
+  fi
+
+  if ! grep -F "$line" "$file" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  tmp="${file}.khelper-tmp.$$"
+  awk -v target="$line" '$0 != target { print }' "$file" > "$tmp" || {
+    rm -f "$tmp" 2>/dev/null || true
+    return 1
+  }
+
+  if [ -w "$file" ] || [ -w "$(dirname "$file")" ]; then
+    mv "$tmp" "$file"
+  else
+    run_privileged mv "$tmp" "$file"
+  fi
+
+  echo "Updated $file (removed completion source line)"
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --workdir)
@@ -105,6 +131,7 @@ if [ -n "${HOME:-}" ]; then
   remove_path "$HOME/.local/bin/${BINARY_NAME}"
   remove_path "$HOME/bin/${BINARY_NAME}"
   remove_path "$HOME/.local/share/bash-completion/completions/${BINARY_NAME}"
+  remove_line_if_present "$HOME/.bashrc" '[ -r "$HOME/.local/share/bash-completion/completions/khelper" ] && . "$HOME/.local/share/bash-completion/completions/khelper"'
   remove_path "$HOME/.zfunc/_${BINARY_NAME}"
   remove_path "$HOME/.config/fish/completions/${BINARY_NAME}.fish"
 
@@ -115,6 +142,7 @@ fi
 
 remove_path "/etc/bash_completion.d/${BINARY_NAME}"
 remove_path "/usr/local/etc/bash_completion.d/${BINARY_NAME}"
+remove_path "/etc/profile.d/${BINARY_NAME}-completion.sh"
 
 if [ "$PURGE_ARTIFACTS" = "true" ]; then
   remove_path "${REPO_ROOT}/${BINARY_NAME}"

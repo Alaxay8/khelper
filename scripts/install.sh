@@ -56,6 +56,51 @@ run_privileged() {
   fi
 }
 
+try_install_file() {
+  mode="$1"
+  src="$2"
+  dst="$3"
+  parent="$(dirname "$dst")"
+
+  if [ ! -d "$parent" ]; then
+    if ! mkdir -p "$parent" 2>/dev/null; then
+      if [ "$(id -u)" -eq 0 ]; then
+        return 1
+      fi
+      if has_cmd sudo; then
+        sudo mkdir -p "$parent" >/dev/null 2>&1 || return 1
+      else
+        return 1
+      fi
+    fi
+  fi
+
+  if install -m "$mode" "$src" "$dst" 2>/dev/null; then
+    return 0
+  fi
+
+  if [ "$(id -u)" -ne 0 ] && has_cmd sudo; then
+    sudo install -m "$mode" "$src" "$dst" >/dev/null 2>&1 && return 0
+  fi
+
+  return 1
+}
+
+append_line_if_missing() {
+  file="$1"
+  line="$2"
+
+  if [ ! -f "$file" ]; then
+    touch "$file" 2>/dev/null || return 1
+  fi
+
+  if ! grep -F "$line" "$file" >/dev/null 2>&1; then
+    printf '\n%s\n' "$line" >> "$file" || return 1
+  fi
+
+  return 0
+}
+
 runnable_binary() {
   candidate="$1"
   chmod +x "$candidate" >/dev/null 2>&1 || true
@@ -97,6 +142,57 @@ ensure_go() {
 
   if ! has_cmd go; then
     die "failed to install Go"
+  fi
+}
+
+setup_bash_completion() {
+  completion_tmp="${TMP_DIR}/${BINARY_NAME}.bash-completion"
+  if ! "$DEST" completion bash > "$completion_tmp" 2>/dev/null; then
+    echo "WARN: failed to generate bash completion script; skipping completion setup" >&2
+    return 0
+  fi
+
+  if [ -n "${HOME:-}" ]; then
+    user_completion_path="$HOME/.local/share/bash-completion/completions/${BINARY_NAME}"
+    if try_install_file 0644 "$completion_tmp" "$user_completion_path"; then
+      line='[ -r "$HOME/.local/share/bash-completion/completions/khelper" ] && . "$HOME/.local/share/bash-completion/completions/khelper"'
+      if append_line_if_missing "$HOME/.bashrc" "$line"; then
+        echo "Enabled user bash completion in $HOME/.bashrc"
+      else
+        echo "WARN: failed to update $HOME/.bashrc for bash completion" >&2
+      fi
+      echo "Installed user bash completion to $user_completion_path"
+    else
+      echo "WARN: failed to install user bash completion to $user_completion_path" >&2
+    fi
+  fi
+
+  if [ "$OS" = "linux" ]; then
+    global_completion_path="/etc/bash_completion.d/${BINARY_NAME}"
+    if try_install_file 0644 "$completion_tmp" "$global_completion_path"; then
+      profile_tmp="${TMP_DIR}/${BINARY_NAME}-completion.sh"
+      cat > "$profile_tmp" <<EOF
+# ${BINARY_NAME} bash completion (installed by scripts/install.sh)
+if [ -n "\${BASH_VERSION:-}" ] && [ -r "${global_completion_path}" ]; then
+  . "${global_completion_path}"
+fi
+EOF
+      if try_install_file 0644 "$profile_tmp" "/etc/profile.d/${BINARY_NAME}-completion.sh"; then
+        echo "Installed global bash completion hook to /etc/profile.d/${BINARY_NAME}-completion.sh"
+      else
+        echo "WARN: failed to install /etc/profile.d/${BINARY_NAME}-completion.sh" >&2
+      fi
+      echo "Installed global bash completion to $global_completion_path"
+    else
+      echo "WARN: failed to install global bash completion to $global_completion_path" >&2
+    fi
+  elif [ "$OS" = "darwin" ]; then
+    mac_completion_path="/usr/local/etc/bash_completion.d/${BINARY_NAME}"
+    if try_install_file 0644 "$completion_tmp" "$mac_completion_path"; then
+      echo "Installed global bash completion to $mac_completion_path"
+    else
+      echo "WARN: failed to install global bash completion to $mac_completion_path" >&2
+    fi
   fi
 }
 
@@ -249,3 +345,4 @@ fi
 
 echo "Installed ${BINARY_NAME} to ${DEST}"
 "$DEST" version || true
+setup_bash_completion

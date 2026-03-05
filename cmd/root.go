@@ -96,6 +96,7 @@ func init() {
 	cobra.OnInitialize()
 
 	config.InitViper(cfgViper)
+	rootCmd.CompletionOptions.DisableDefaultCmd = true
 
 	flags := rootCmd.PersistentFlags()
 	flags.String("kubeconfig", config.DefaultKubeconfigPath(), "Path to kubeconfig file")
@@ -112,6 +113,7 @@ func init() {
 
 	rootCmd.AddCommand(
 		newVersionCmd(),
+		newCompletionCmd(),
 		newCompletionInstallCmd(),
 		newContextCmd(),
 		newNamespaceCmd(),
