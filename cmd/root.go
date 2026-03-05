@@ -12,11 +12,12 @@ import (
 )
 
 const (
-	ExitCodeGeneral     = 1
-	ExitCodeNotFound    = 2
-	ExitCodeAmbiguous   = 3
-	ExitCodeUsage       = 4
-	ExitCodeUnavailable = 5
+	ExitCodeGeneral        = 1
+	ExitCodeNotFound       = 2
+	ExitCodeAmbiguous      = 3
+	ExitCodeUsage          = 4
+	ExitCodeUnavailable    = 5
+	ExitCodeDoctorFindings = 6
 )
 
 type ExitError struct {
@@ -71,8 +72,11 @@ var (
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
-		os.Exit(exitCode(err))
+		code := exitCode(err)
+		if code != ExitCodeDoctorFindings {
+			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		}
+		os.Exit(code)
 	}
 }
 
@@ -114,6 +118,7 @@ func init() {
 		newRestartCmd(),
 		newShellCmd(),
 		newTopCmd(),
+		newDoctorCmd(),
 	)
 }
 
