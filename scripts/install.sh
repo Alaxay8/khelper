@@ -250,6 +250,8 @@ esac
 if [ -z "$INSTALL_DIR" ]; then
   if [ "$OS" = "darwin" ] && [ "$ARCH" = "arm64" ] && [ -d "/opt/homebrew/bin" ]; then
     INSTALL_DIR="/opt/homebrew/bin"
+  elif [ "$(id -u)" -eq 0 ]; then
+    INSTALL_DIR="/usr/local/bin"
   elif [ -n "${HOME:-}" ] && [ -d "$HOME/.local/bin" ] && [ -w "$HOME/.local/bin" ]; then
     INSTALL_DIR="$HOME/.local/bin"
   else
