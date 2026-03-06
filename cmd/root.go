@@ -119,6 +119,7 @@ func init() {
 		newNamespaceCmd(),
 		newPodsCmd(),
 		newLogsCmd(),
+		newEventsCmd(),
 		newRestartCmd(),
 		newShellCmd(),
 		newTopCmd(),

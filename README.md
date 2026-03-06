@@ -6,7 +6,7 @@ It uses `client-go` directly (no shelling out to `kubectl`), reads kubeconfig th
 
 ## Features
 
-- Short commands for pods, logs, restart, shell, metrics, context, and namespace workflows
+- Short commands for pods, logs, events, restart, shell, metrics, context, and namespace workflows
 - `doctor` diagnostics command for fast root-cause hints on broken workloads/pods
 - Deterministic target resolution (`deployment -> statefulset -> pod` by default)
 - Config via `~/.khelper.yaml`, environment variables (`KHELPER_*`), and flags
@@ -237,6 +237,14 @@ khelper logs payment --container api
 khelper logs payment --all-containers --follow
 ```
 
+### Events
+
+```bash
+khelper events payment
+khelper events payment --warnings-only --since=30m
+khelper events payment --kind=deployment --pick=2 -o json
+```
+
 ### Restart
 
 ```bash
@@ -343,4 +351,3 @@ make release
 - `4` usage/config error
 - `5` unavailable dependency (for example metrics API not installed)
 - `6` diagnostics findings detected by `doctor` (`warning`/`error` severity)
-
