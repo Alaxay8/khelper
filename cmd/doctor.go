@@ -18,6 +18,7 @@ func newDoctorCmd() *cobra.Command {
 	var sinceStr string
 	var logsTail int64
 	var container string
+	var allNamespaces bool
 
 	cmd := &cobra.Command{
 		Use:     "doctor <target>",
@@ -48,7 +49,13 @@ func newDoctorCmd() *cobra.Command {
 				return WrapExitError(ExitCodeGeneral, err, "initialize kubernetes client")
 			}
 
+			namespaceScope := bundle.Namespace
+			if allNamespaces {
+				namespaceScope = kube.NamespaceAll
+			}
+
 			snapshot, err := doctor.Collect(cmd.Context(), bundle, target, doctor.CollectOptions{
+				Namespace: namespaceScope,
 				Kind:      kind,
 				Pick:      pick,
 				Since:     since,
@@ -105,6 +112,7 @@ func newDoctorCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&kind, "kind", "", "Target kind override: deployment|statefulset|pod")
 	cmd.Flags().IntVar(&pick, "pick", 0, "Pick match number when multiple targets are found (1-based)")
+	cmd.Flags().BoolVarP(&allNamespaces, "all-namespaces", "A", false, "Search target across all namespaces")
 	cmd.Flags().StringVar(&sinceStr, "since", "1h", "Analyze warning events newer than this duration (e.g. 30m, 2h)")
 	cmd.Flags().Int64Var(&logsTail, "logs-tail", 120, "Tail lines to include from selected pod container for evidence (0 disables)")
 	cmd.Flags().StringVar(&container, "container", "", "Container name for --logs-tail evidence")

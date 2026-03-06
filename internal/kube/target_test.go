@@ -88,6 +88,34 @@ func TestResolveWorkloadAmbiguousRequiresPick(t *testing.T) {
 	}
 }
 
+func TestResolveWorkloadAllNamespacesAmbiguousRequiresPick(t *testing.T) {
+	t.Parallel()
+
+	client := fake.NewSimpleClientset(
+		newDeployment("alpha", "frontend", map[string]string{"app": "frontend-alpha"}),
+		newDeployment("shop", "frontend", map[string]string{"app": "frontend-shop"}),
+	)
+
+	resolver := NewResolver(client)
+	_, err := resolver.ResolveWorkload(context.Background(), NamespaceAll, "frontend", KindDeployment, 0)
+	if err == nil {
+		t.Fatal("expected ambiguity error across namespaces")
+	}
+
+	var amb *AmbiguousMatchError
+	if !errors.As(err, &amb) {
+		t.Fatalf("expected AmbiguousMatchError, got %T (%v)", err, err)
+	}
+
+	ref, err := resolver.ResolveWorkload(context.Background(), NamespaceAll, "frontend", KindDeployment, 2)
+	if err != nil {
+		t.Fatalf("unexpected pick error: %v", err)
+	}
+	if ref.Namespace != "shop" {
+		t.Fatalf("expected pick=2 to return namespace shop, got %s", ref.Namespace)
+	}
+}
+
 func TestResolvePodChoosesNewestRunning(t *testing.T) {
 	t.Parallel()
 
@@ -134,6 +162,34 @@ func TestResolvePodWarnsWhenNoRunning(t *testing.T) {
 	}
 	if resolved.Warning == "" {
 		t.Fatal("expected warning when no running pods are available")
+	}
+}
+
+func TestResolvePodAllNamespacesUsesPickedNamespace(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	client := fake.NewSimpleClientset(
+		newDeployment("alpha", "frontend", map[string]string{"app": "frontend-alpha"}),
+		newPod("alpha", "frontend-alpha-pod", map[string]string{"app": "frontend-alpha"}, corev1.PodRunning, ptrTime(now.Add(-2*time.Minute)), now.Add(-2*time.Minute)),
+		newDeployment("shop", "frontend", map[string]string{"app": "frontend-shop"}),
+		newPod("shop", "frontend-shop-pod", map[string]string{"app": "frontend-shop"}, corev1.PodRunning, ptrTime(now.Add(-1*time.Minute)), now.Add(-1*time.Minute)),
+	)
+
+	resolver := NewResolver(client)
+	resolved, err := resolver.ResolvePod(context.Background(), NamespaceAll, "frontend", KindDeployment, 2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if resolved.Workload.Namespace != "shop" {
+		t.Fatalf("expected workload namespace shop, got %s", resolved.Workload.Namespace)
+	}
+	if resolved.Pod.Namespace != "shop" {
+		t.Fatalf("expected pod namespace shop, got %s", resolved.Pod.Namespace)
+	}
+	if resolved.Pod.Name != "frontend-shop-pod" {
+		t.Fatalf("expected shop pod, got %s", resolved.Pod.Name)
 	}
 }
 

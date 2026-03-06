@@ -33,6 +33,7 @@ type Rule struct {
 }
 
 type CollectOptions struct {
+	Namespace string
 	Kind      string
 	Pick      int
 	Since     time.Duration

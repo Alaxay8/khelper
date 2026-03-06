@@ -27,13 +27,18 @@ func Collect(ctx context.Context, bundle *kube.ClientBundle, target string, opti
 	}
 
 	resolver := kube.NewResolver(bundle.Clientset)
-	workload, err := resolver.ResolveWorkload(ctx, bundle.Namespace, target, options.Kind, options.Pick)
+	namespaceScope := strings.TrimSpace(options.Namespace)
+	if namespaceScope == "" {
+		namespaceScope = bundle.Namespace
+	}
+
+	workload, err := resolver.ResolveWorkload(ctx, namespaceScope, target, options.Kind, options.Pick)
 	if err != nil {
 		return nil, err
 	}
 
 	snapshot := &Snapshot{
-		Namespace: bundle.Namespace,
+		Namespace: workload.Namespace,
 		Target:    target,
 		Workload:  workload,
 		Since:     options.Since,
@@ -49,7 +54,7 @@ func Collect(ctx context.Context, bundle *kube.ClientBundle, target string, opti
 	}
 	snapshot.Pods = pods
 
-	resolvedPod, err := resolver.ResolvePod(ctx, bundle.Namespace, workload.Name, workload.Kind, 0)
+	resolvedPod, err := resolver.ResolvePod(ctx, workload.Namespace, workload.Name, workload.Kind, 0)
 	if err == nil {
 		snapshot.SelectedPod = resolvedPod.Pod
 		snapshot.SelectedPodWarning = resolvedPod.Warning
@@ -78,21 +83,26 @@ func Collect(ctx context.Context, bundle *kube.ClientBundle, target string, opti
 }
 
 func hydrateWorkloadStatus(ctx context.Context, bundle *kube.ClientBundle, snapshot *Snapshot) error {
+	namespace := snapshot.Namespace
+	if namespace == "" {
+		namespace = bundle.Namespace
+	}
+
 	switch snapshot.Workload.Kind {
 	case kube.KindDeployment:
-		dep, err := bundle.Clientset.AppsV1().Deployments(bundle.Namespace).Get(ctx, snapshot.Workload.Name, metav1.GetOptions{})
+		dep, err := bundle.Clientset.AppsV1().Deployments(namespace).Get(ctx, snapshot.Workload.Name, metav1.GetOptions{})
 		if err != nil {
 			if apierrors.IsNotFound(err) {
-				return &kube.NotFoundError{Namespace: bundle.Namespace, Target: snapshot.Workload.Name, Kind: kube.KindDeployment}
+				return &kube.NotFoundError{Namespace: namespace, Target: snapshot.Workload.Name, Kind: kube.KindDeployment}
 			}
 			return fmt.Errorf("get deployment %s: %w", snapshot.Workload.Name, err)
 		}
 		snapshot.Deployment = dep
 	case kube.KindStatefulSet:
-		sts, err := bundle.Clientset.AppsV1().StatefulSets(bundle.Namespace).Get(ctx, snapshot.Workload.Name, metav1.GetOptions{})
+		sts, err := bundle.Clientset.AppsV1().StatefulSets(namespace).Get(ctx, snapshot.Workload.Name, metav1.GetOptions{})
 		if err != nil {
 			if apierrors.IsNotFound(err) {
-				return &kube.NotFoundError{Namespace: bundle.Namespace, Target: snapshot.Workload.Name, Kind: kube.KindStatefulSet}
+				return &kube.NotFoundError{Namespace: namespace, Target: snapshot.Workload.Name, Kind: kube.KindStatefulSet}
 			}
 			return fmt.Errorf("get statefulset %s: %w", snapshot.Workload.Name, err)
 		}
@@ -103,12 +113,17 @@ func hydrateWorkloadStatus(ctx context.Context, bundle *kube.ClientBundle, snaps
 }
 
 func listWorkloadPods(ctx context.Context, bundle *kube.ClientBundle, workload kube.WorkloadRef) ([]corev1.Pod, error) {
+	namespace := workload.Namespace
+	if namespace == "" {
+		namespace = bundle.Namespace
+	}
+
 	switch workload.Kind {
 	case kube.KindPod:
-		pod, err := bundle.Clientset.CoreV1().Pods(bundle.Namespace).Get(ctx, workload.Name, metav1.GetOptions{})
+		pod, err := bundle.Clientset.CoreV1().Pods(namespace).Get(ctx, workload.Name, metav1.GetOptions{})
 		if err != nil {
 			if apierrors.IsNotFound(err) {
-				return nil, &kube.NotFoundError{Namespace: bundle.Namespace, Target: workload.Name, Kind: kube.KindPod}
+				return nil, &kube.NotFoundError{Namespace: namespace, Target: workload.Name, Kind: kube.KindPod}
 			}
 			return nil, fmt.Errorf("get pod %s: %w", workload.Name, err)
 		}
@@ -117,7 +132,7 @@ func listWorkloadPods(ctx context.Context, bundle *kube.ClientBundle, workload k
 		if workload.Selector == "" {
 			return nil, fmt.Errorf("workload %s/%s has no pod selector", workload.Kind, workload.Name)
 		}
-		list, err := bundle.Clientset.CoreV1().Pods(bundle.Namespace).List(ctx, metav1.ListOptions{LabelSelector: workload.Selector})
+		list, err := bundle.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: workload.Selector})
 		if err != nil {
 			return nil, fmt.Errorf("list pods with selector %q: %w", workload.Selector, err)
 		}
@@ -131,7 +146,12 @@ func listWorkloadPods(ctx context.Context, bundle *kube.ClientBundle, workload k
 }
 
 func listRelatedEvents(ctx context.Context, bundle *kube.ClientBundle, snapshot *Snapshot, options CollectOptions) ([]corev1.Event, error) {
-	list, err := bundle.Clientset.CoreV1().Events(bundle.Namespace).List(ctx, metav1.ListOptions{})
+	namespace := snapshot.Namespace
+	if namespace == "" {
+		namespace = bundle.Namespace
+	}
+
+	list, err := bundle.Clientset.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list events: %w", err)
 	}
@@ -254,7 +274,7 @@ func captureLogSnippet(ctx context.Context, bundle *kube.ClientBundle, pod *core
 	}
 
 	opts := &corev1.PodLogOptions{Container: container, TailLines: &tail}
-	req := bundle.Clientset.CoreV1().Pods(bundle.Namespace).GetLogs(pod.Name, opts)
+	req := bundle.Clientset.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, opts)
 	logSnippet := &LogSnippet{Pod: pod.Name, Container: container, Tail: tail}
 
 	raw, err := req.DoRaw(ctx)

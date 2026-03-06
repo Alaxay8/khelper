@@ -15,6 +15,7 @@ func newLogsCmd() *cobra.Command {
 	var tail int64
 	var container string
 	var allContainers bool
+	var allNamespaces bool
 	var kind string
 	var pick int
 
@@ -46,8 +47,13 @@ func newLogsCmd() *cobra.Command {
 				return WrapExitError(ExitCodeGeneral, err, "initialize kubernetes client")
 			}
 
+			namespaceScope := bundle.Namespace
+			if allNamespaces {
+				namespaceScope = kube.NamespaceAll
+			}
+
 			resolver := kube.NewResolver(bundle.Clientset)
-			resolved, err := resolver.ResolvePod(cmd.Context(), bundle.Namespace, target, kind, pick)
+			resolved, err := resolver.ResolvePod(cmd.Context(), namespaceScope, target, kind, pick)
 			if err != nil {
 				return err
 			}
@@ -75,6 +81,7 @@ func newLogsCmd() *cobra.Command {
 	cmd.Flags().Int64Var(&tail, "tail", 200, "Number of recent log lines to show")
 	cmd.Flags().StringVar(&container, "container", "", "Container name")
 	cmd.Flags().BoolVar(&allContainers, "all-containers", false, "Show logs for all containers")
+	cmd.Flags().BoolVarP(&allNamespaces, "all-namespaces", "A", false, "Search target across all namespaces")
 	cmd.Flags().StringVar(&kind, "kind", "", "Target kind override: deployment|statefulset|pod")
 	cmd.Flags().IntVar(&pick, "pick", 0, "Pick match number when multiple targets are found (1-based)")
 
