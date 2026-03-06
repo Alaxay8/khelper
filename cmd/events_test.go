@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alaxay8/khelper/internal/kube"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -168,5 +169,41 @@ func TestIsEventInScopeMatchesPodByUID(t *testing.T) {
 
 	if !isEventInScope(event, scope) {
 		t.Fatal("expected event to match scope by pod UID")
+	}
+}
+
+func TestFilterRelatedEventsMatchesDeletedDeploymentPodEvents(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 6, 12, 0, 0, 0, time.UTC)
+	workload := kube.WorkloadRef{
+		Kind: kube.KindDeployment,
+		Name: "frontend",
+	}
+
+	scope := buildEventScope(workload, nil, map[string]struct{}{
+		"frontend-84578d7b58": {},
+	})
+
+	events := []corev1.Event{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "stale-pod-warning"},
+			InvolvedObject: corev1.ObjectReference{
+				Kind: "Pod",
+				Name: "frontend-84578d7b58-6v59m",
+			},
+			Type:          corev1.EventTypeWarning,
+			Reason:        "Unhealthy",
+			Message:       "Readiness probe failed",
+			LastTimestamp: metav1.NewTime(now.Add(-90 * time.Second)),
+		},
+	}
+
+	filtered := filterRelatedEvents(events, scope, 15*time.Minute, now, true)
+	if len(filtered) != 1 {
+		t.Fatalf("expected stale deployment pod warning to match, got %d events", len(filtered))
+	}
+	if filtered[0].Name != "stale-pod-warning" {
+		t.Fatalf("expected stale-pod-warning, got %s", filtered[0].Name)
 	}
 }

@@ -30,6 +30,7 @@ type eventScope struct {
 	podNames        map[string]struct{}
 	podUIDs         map[string]struct{}
 	replicaSetNames map[string]struct{}
+	podNamePrefixes []string
 }
 
 func newEventsCmd() *cobra.Command {
@@ -172,6 +173,7 @@ func buildEventScope(workload kube.WorkloadRef, pods []corev1.Pod, replicaSetNam
 		podNames:        make(map[string]struct{}, len(pods)),
 		podUIDs:         make(map[string]struct{}, len(pods)),
 		replicaSetNames: replicaSetNames,
+		podNamePrefixes: make([]string, 0, len(replicaSetNames)+1),
 	}
 
 	for i := range pods {
@@ -180,6 +182,17 @@ func buildEventScope(workload kube.WorkloadRef, pods []corev1.Pod, replicaSetNam
 		if pod.UID != "" {
 			scope.podUIDs[string(pod.UID)] = struct{}{}
 		}
+	}
+
+	switch workload.Kind {
+	case kube.KindDeployment:
+		for rsName := range replicaSetNames {
+			scope.podNamePrefixes = append(scope.podNamePrefixes, rsName+"-")
+		}
+		// Fallback for events that reference pods from rollout history when old RS is already gone.
+		scope.podNamePrefixes = append(scope.podNamePrefixes, workload.Name+"-")
+	case kube.KindStatefulSet:
+		scope.podNamePrefixes = append(scope.podNamePrefixes, workload.Name+"-")
 	}
 
 	return scope
@@ -242,6 +255,11 @@ func isEventInScope(event corev1.Event, scope eventScope) bool {
 		}
 		if uid != "" {
 			if _, ok := scope.podUIDs[uid]; ok {
+				return true
+			}
+		}
+		for i := range scope.podNamePrefixes {
+			if strings.HasPrefix(name, scope.podNamePrefixes[i]) {
 				return true
 			}
 		}
