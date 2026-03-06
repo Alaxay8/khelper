@@ -115,6 +115,92 @@ func TestCollectResolvesDeploymentAndFiltersRelatedEvents(t *testing.T) {
 	}
 }
 
+func TestCollectAllNamespacesUsesPickedWorkloadNamespace(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+
+	depAlphaLabels := map[string]string{"app": "payment-alpha"}
+	depShopLabels := map[string]string{"app": "payment-shop"}
+
+	depAlpha := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "payment", Namespace: "alpha", Labels: depAlphaLabels},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: int32Ptr(1),
+			Selector: &metav1.LabelSelector{MatchLabels: depAlphaLabels},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: depAlphaLabels},
+				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "nginx"}}},
+			},
+		},
+		Status: appsv1.DeploymentStatus{ReadyReplicas: 1, AvailableReplicas: 1},
+	}
+	depShop := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "payment", Namespace: "shop", Labels: depShopLabels},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: int32Ptr(1),
+			Selector: &metav1.LabelSelector{MatchLabels: depShopLabels},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: depShopLabels},
+				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "nginx"}}},
+			},
+		},
+		Status: appsv1.DeploymentStatus{ReadyReplicas: 1, AvailableReplicas: 1},
+	}
+
+	alphaPodStart := metav1.NewTime(now.Add(-2 * time.Minute))
+	shopPodStart := metav1.NewTime(now.Add(-1 * time.Minute))
+	alphaPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "payment-alpha-pod", Namespace: "alpha", Labels: depAlphaLabels, UID: "alpha-pod"},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "nginx"}}},
+		Status: corev1.PodStatus{
+			Phase:     corev1.PodRunning,
+			StartTime: &alphaPodStart,
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name:  "app",
+				Ready: true,
+			}},
+		},
+	}
+	shopPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "payment-shop-pod", Namespace: "shop", Labels: depShopLabels, UID: "shop-pod"},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "nginx"}}},
+		Status: corev1.PodStatus{
+			Phase:     corev1.PodRunning,
+			StartTime: &shopPodStart,
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name:  "app",
+				Ready: true,
+			}},
+		},
+	}
+
+	client := fake.NewSimpleClientset(depAlpha, depShop, alphaPod, shopPod)
+	bundle := &kube.ClientBundle{Clientset: client, Namespace: "default"}
+
+	snapshot, err := Collect(context.Background(), bundle, "payment", CollectOptions{
+		Namespace: kube.NamespaceAll,
+		Kind:      kube.KindDeployment,
+		Pick:      2,
+		Since:     time.Hour,
+		LogsTail:  0,
+		Now:       now,
+	})
+	if err != nil {
+		t.Fatalf("collect returned error: %v", err)
+	}
+
+	if snapshot.Namespace != "shop" {
+		t.Fatalf("expected snapshot namespace shop, got %q", snapshot.Namespace)
+	}
+	if snapshot.Workload.Namespace != "shop" {
+		t.Fatalf("expected workload namespace shop, got %q", snapshot.Workload.Namespace)
+	}
+	if snapshot.SelectedPod == nil || snapshot.SelectedPod.Namespace != "shop" {
+		t.Fatalf("expected selected pod in shop namespace, got %+v", snapshot.SelectedPod)
+	}
+}
+
 func int32Ptr(value int32) *int32 {
 	return &value
 }

@@ -9,6 +9,7 @@ It uses `client-go` directly (no shelling out to `kubectl`), reads kubeconfig th
 - Short commands for pods, logs, events, restart, shell, metrics, context, and namespace workflows
 - `doctor` diagnostics command for fast root-cause hints on broken workloads/pods
 - Deterministic target resolution (`deployment -> statefulset -> pod` by default)
+- Optional cross-namespace target resolution via `--all-namespaces` (`-A`)
 - Config via `~/.khelper.yaml`, environment variables (`KHELPER_*`), and flags
 - Table output by default with optional JSON output (`-o json`)
 - Colored pod status in TTY mode
@@ -223,6 +224,7 @@ khelper ns use shop
 
 ```bash
 khelper pods payment
+khelper pods payment -A
 khelper pods payment --wide
 khelper pods payment --kind=deployment --pick=2
 khelper pods payment -o json
@@ -232,6 +234,7 @@ khelper pods payment -o json
 
 ```bash
 khelper logs payment
+khelper logs payment -A --kind=deployment --pick=2
 khelper logs payment --follow --since=10m --tail=200
 khelper logs payment --container api
 khelper logs payment --all-containers --follow
@@ -256,6 +259,7 @@ khelper restart payment --kind=deployment --timeout=10m
 
 ```bash
 khelper doctor payment
+khelper doctor payment -A --kind=deployment --pick=2
 khelper doctor payment --kind=deployment --since=2h --logs-tail=200
 khelper doctor payment --kind=statefulset --pick=2 --container=api
 khelper doctor payment -o json
@@ -265,6 +269,7 @@ Flags:
 
 - `--kind deployment|statefulset|pod`
 - `--pick N` (1-based choice when resolver finds multiple matches)
+- `--all-namespaces, -A` (resolve target across all namespaces)
 - `--since 1h` (window for warning events analysis)
 - `--logs-tail 120` (tail lines from selected pod container to include as evidence, `0` disables)
 - `--container NAME` (container for log evidence)

@@ -19,6 +19,7 @@ const (
 	KindDeployment  = "deployment"
 	KindStatefulSet = "statefulset"
 	KindPod         = "pod"
+	NamespaceAll    = "*"
 )
 
 var (
@@ -46,10 +47,11 @@ type NotFoundError struct {
 }
 
 func (e *NotFoundError) Error() string {
+	scope := namespaceScopeLabel(e.Namespace)
 	if e.Kind == "" {
-		return fmt.Sprintf("target %q not found in namespace %q", e.Target, e.Namespace)
+		return fmt.Sprintf("target %q not found in %s", e.Target, scope)
 	}
-	return fmt.Sprintf("%s target %q not found in namespace %q", e.Kind, e.Target, e.Namespace)
+	return fmt.Sprintf("%s target %q not found in %s", e.Kind, e.Target, scope)
 }
 
 type AmbiguousMatchError struct {
@@ -62,15 +64,27 @@ type AmbiguousMatchError struct {
 func (e *AmbiguousMatchError) Error() string {
 	items := make([]string, 0, len(e.Matches))
 	for i, m := range e.Matches {
-		items = append(items, fmt.Sprintf("%d:%s/%s", i+1, m.Kind, m.Name))
+		if strings.TrimSpace(m.Namespace) != "" {
+			items = append(items, fmt.Sprintf("%d:%s/%s (%s)", i+1, m.Kind, m.Name, m.Namespace))
+		} else {
+			items = append(items, fmt.Sprintf("%d:%s/%s", i+1, m.Kind, m.Name))
+		}
 	}
+	scope := namespaceScopeLabel(e.Namespace)
 	return fmt.Sprintf(
-		"multiple matches for %q in namespace %q (%s). Re-run with --pick=N. Matches: %s",
+		"multiple matches for %q in %s (%s). Re-run with --pick=N. Matches: %s",
 		e.Target,
-		e.Namespace,
+		scope,
 		e.Kind,
 		strings.Join(items, ", "),
 	)
+}
+
+func namespaceScopeLabel(namespace string) string {
+	if strings.TrimSpace(namespace) == "" || namespace == NamespaceAll {
+		return "all namespaces"
+	}
+	return fmt.Sprintf("namespace %q", namespace)
 }
 
 type InvalidPickError struct {
@@ -134,10 +148,10 @@ func (r *Resolver) ResolvePod(ctx context.Context, namespace, target, kind strin
 	}
 
 	if workload.Kind == KindPod {
-		pod, err := r.client.CoreV1().Pods(namespace).Get(ctx, workload.Name, metav1.GetOptions{})
+		pod, err := r.client.CoreV1().Pods(workload.Namespace).Get(ctx, workload.Name, metav1.GetOptions{})
 		if err != nil {
 			if apierrors.IsNotFound(err) {
-				return nil, &NotFoundError{Namespace: namespace, Target: workload.Name, Kind: KindPod}
+				return nil, &NotFoundError{Namespace: workload.Namespace, Target: workload.Name, Kind: KindPod}
 			}
 			return nil, fmt.Errorf("get pod %s: %w", workload.Name, err)
 		}
@@ -148,12 +162,12 @@ func (r *Resolver) ResolvePod(ctx context.Context, namespace, target, kind strin
 		return nil, fmt.Errorf("workload %s/%s does not expose a pod selector", workload.Kind, workload.Name)
 	}
 
-	pods, err := r.client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: workload.Selector})
+	pods, err := r.client.CoreV1().Pods(workload.Namespace).List(ctx, metav1.ListOptions{LabelSelector: workload.Selector})
 	if err != nil {
 		return nil, fmt.Errorf("list pods for selector %q: %w", workload.Selector, err)
 	}
 	if len(pods.Items) == 0 {
-		return nil, &NotFoundError{Namespace: namespace, Target: workload.Name, Kind: KindPod}
+		return nil, &NotFoundError{Namespace: workload.Namespace, Target: workload.Name, Kind: KindPod}
 	}
 
 	selected, warning := selectBestPod(pods.Items)
@@ -179,6 +193,19 @@ func normalizeKinds(kind string) ([]string, error) {
 }
 
 func (r *Resolver) resolveSingleKind(ctx context.Context, namespace, target, kind string, pick int) (WorkloadRef, error) {
+	if namespace == NamespaceAll {
+		switch kind {
+		case KindDeployment:
+			return r.resolveDeploymentAllNamespaces(ctx, target, pick)
+		case KindStatefulSet:
+			return r.resolveStatefulSetAllNamespaces(ctx, target, pick)
+		case KindPod:
+			return r.resolvePodByTargetAllNamespaces(ctx, target, pick)
+		default:
+			return WorkloadRef{}, fmt.Errorf("%w %q", ErrInvalidKind, kind)
+		}
+	}
+
 	switch kind {
 	case KindDeployment:
 		return r.resolveDeployment(ctx, namespace, target, pick)
@@ -223,6 +250,51 @@ func (r *Resolver) resolveDeployment(ctx context.Context, namespace, target stri
 	return WorkloadRef{}, &NotFoundError{Namespace: namespace, Target: target, Kind: KindDeployment}
 }
 
+func (r *Resolver) resolveDeploymentAllNamespaces(ctx context.Context, target string, pick int) (WorkloadRef, error) {
+	deployments, err := r.client.AppsV1().Deployments(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return WorkloadRef{}, fmt.Errorf("list deployments across all namespaces: %w", err)
+	}
+
+	nameMatches := make([]WorkloadRef, 0)
+	for i := range deployments.Items {
+		dep := &deployments.Items[i]
+		if dep.Name != target {
+			continue
+		}
+		ref, err := deploymentRef(dep, "name")
+		if err != nil {
+			return WorkloadRef{}, err
+		}
+		nameMatches = append(nameMatches, ref)
+	}
+	if len(nameMatches) > 0 {
+		return pickSingleMatch(NamespaceAll, target, KindDeployment, nameMatches, pick)
+	}
+
+	for _, selector := range TargetSelectors(target) {
+		lst, err := r.client.AppsV1().Deployments(metav1.NamespaceAll).List(ctx, metav1.ListOptions{LabelSelector: selector})
+		if err != nil {
+			return WorkloadRef{}, fmt.Errorf("list deployments across all namespaces by selector %q: %w", selector, err)
+		}
+		if len(lst.Items) == 0 {
+			continue
+		}
+
+		refs := make([]WorkloadRef, 0, len(lst.Items))
+		for i := range lst.Items {
+			ref, err := deploymentRef(&lst.Items[i], selector)
+			if err != nil {
+				return WorkloadRef{}, err
+			}
+			refs = append(refs, ref)
+		}
+		return pickSingleMatch(NamespaceAll, target, KindDeployment, refs, pick)
+	}
+
+	return WorkloadRef{}, &NotFoundError{Namespace: NamespaceAll, Target: target, Kind: KindDeployment}
+}
+
 func (r *Resolver) resolveStatefulSet(ctx context.Context, namespace, target string, pick int) (WorkloadRef, error) {
 	sts, err := r.client.AppsV1().StatefulSets(namespace).Get(ctx, target, metav1.GetOptions{})
 	if err == nil {
@@ -255,6 +327,51 @@ func (r *Resolver) resolveStatefulSet(ctx context.Context, namespace, target str
 	return WorkloadRef{}, &NotFoundError{Namespace: namespace, Target: target, Kind: KindStatefulSet}
 }
 
+func (r *Resolver) resolveStatefulSetAllNamespaces(ctx context.Context, target string, pick int) (WorkloadRef, error) {
+	statefulSets, err := r.client.AppsV1().StatefulSets(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return WorkloadRef{}, fmt.Errorf("list statefulsets across all namespaces: %w", err)
+	}
+
+	nameMatches := make([]WorkloadRef, 0)
+	for i := range statefulSets.Items {
+		sts := &statefulSets.Items[i]
+		if sts.Name != target {
+			continue
+		}
+		ref, err := statefulSetRef(sts, "name")
+		if err != nil {
+			return WorkloadRef{}, err
+		}
+		nameMatches = append(nameMatches, ref)
+	}
+	if len(nameMatches) > 0 {
+		return pickSingleMatch(NamespaceAll, target, KindStatefulSet, nameMatches, pick)
+	}
+
+	for _, selector := range TargetSelectors(target) {
+		lst, err := r.client.AppsV1().StatefulSets(metav1.NamespaceAll).List(ctx, metav1.ListOptions{LabelSelector: selector})
+		if err != nil {
+			return WorkloadRef{}, fmt.Errorf("list statefulsets across all namespaces by selector %q: %w", selector, err)
+		}
+		if len(lst.Items) == 0 {
+			continue
+		}
+
+		refs := make([]WorkloadRef, 0, len(lst.Items))
+		for i := range lst.Items {
+			ref, err := statefulSetRef(&lst.Items[i], selector)
+			if err != nil {
+				return WorkloadRef{}, err
+			}
+			refs = append(refs, ref)
+		}
+		return pickSingleMatch(NamespaceAll, target, KindStatefulSet, refs, pick)
+	}
+
+	return WorkloadRef{}, &NotFoundError{Namespace: NamespaceAll, Target: target, Kind: KindStatefulSet}
+}
+
 func (r *Resolver) resolvePodByTarget(ctx context.Context, namespace, target string, pick int) (WorkloadRef, error) {
 	pod, err := r.client.CoreV1().Pods(namespace).Get(ctx, target, metav1.GetOptions{})
 	if err == nil {
@@ -283,8 +400,48 @@ func (r *Resolver) resolvePodByTarget(ctx context.Context, namespace, target str
 	return WorkloadRef{}, &NotFoundError{Namespace: namespace, Target: target, Kind: KindPod}
 }
 
+func (r *Resolver) resolvePodByTargetAllNamespaces(ctx context.Context, target string, pick int) (WorkloadRef, error) {
+	pods, err := r.client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return WorkloadRef{}, fmt.Errorf("list pods across all namespaces: %w", err)
+	}
+
+	nameMatches := make([]WorkloadRef, 0)
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.Name != target {
+			continue
+		}
+		nameMatches = append(nameMatches, podRef(pod, "name"))
+	}
+	if len(nameMatches) > 0 {
+		return pickSingleMatch(NamespaceAll, target, KindPod, nameMatches, pick)
+	}
+
+	for _, selector := range TargetSelectors(target) {
+		lst, err := r.client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{LabelSelector: selector})
+		if err != nil {
+			return WorkloadRef{}, fmt.Errorf("list pods across all namespaces by selector %q: %w", selector, err)
+		}
+		if len(lst.Items) == 0 {
+			continue
+		}
+
+		refs := make([]WorkloadRef, 0, len(lst.Items))
+		for i := range lst.Items {
+			refs = append(refs, podRef(&lst.Items[i], selector))
+		}
+		return pickSingleMatch(NamespaceAll, target, KindPod, refs, pick)
+	}
+
+	return WorkloadRef{}, &NotFoundError{Namespace: NamespaceAll, Target: target, Kind: KindPod}
+}
+
 func pickSingleMatch(namespace, target, kind string, refs []WorkloadRef, pick int) (WorkloadRef, error) {
 	sort.SliceStable(refs, func(i, j int) bool {
+		if refs[i].Namespace != refs[j].Namespace {
+			return refs[i].Namespace < refs[j].Namespace
+		}
 		return refs[i].Name < refs[j].Name
 	})
 

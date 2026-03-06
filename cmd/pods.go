@@ -16,18 +16,20 @@ import (
 )
 
 type podSummary struct {
-	Name     string `json:"name"`
-	Ready    string `json:"ready"`
-	Status   string `json:"status"`
-	Restarts int32  `json:"restarts"`
-	Age      string `json:"age"`
-	Node     string `json:"node,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	Name      string `json:"name"`
+	Ready     string `json:"ready"`
+	Status    string `json:"status"`
+	Restarts  int32  `json:"restarts"`
+	Age       string `json:"age"`
+	Node      string `json:"node,omitempty"`
 }
 
 func newPodsCmd() *cobra.Command {
 	var wide bool
 	var kind string
 	var pick int
+	var allNamespaces bool
 
 	cmd := &cobra.Command{
 		Use:   "pods <target>",
@@ -42,8 +44,13 @@ func newPodsCmd() *cobra.Command {
 				return WrapExitError(ExitCodeGeneral, err, "initialize kubernetes client")
 			}
 
+			namespaceScope := bundle.Namespace
+			if allNamespaces {
+				namespaceScope = kube.NamespaceAll
+			}
+
 			resolver := kube.NewResolver(bundle.Clientset)
-			workload, err := resolver.ResolveWorkload(cmd.Context(), bundle.Namespace, target, kind, pick)
+			workload, err := resolver.ResolveWorkload(cmd.Context(), namespaceScope, target, kind, pick)
 			if err != nil {
 				return err
 			}
@@ -53,19 +60,23 @@ func newPodsCmd() *cobra.Command {
 				return err
 			}
 			if len(pods) == 0 {
-				return &kube.NotFoundError{Namespace: bundle.Namespace, Target: target, Kind: kube.KindPod}
+				return &kube.NotFoundError{Namespace: workload.Namespace, Target: target, Kind: kube.KindPod}
 			}
 
 			summaries := make([]podSummary, 0, len(pods))
 			for _, pod := range pods {
-				summaries = append(summaries, podSummary{
+				summary := podSummary{
 					Name:     pod.Name,
 					Ready:    podReady(pod),
 					Status:   podStatus(pod),
 					Restarts: podRestarts(pod),
 					Age:      humanDurationSince(pod.CreationTimestamp.Time),
 					Node:     pod.Spec.NodeName,
-				})
+				}
+				if allNamespaces {
+					summary.Namespace = pod.Namespace
+				}
+				summaries = append(summaries, summary)
 			}
 
 			if settings.Output == "json" {
@@ -77,6 +88,9 @@ func newPodsCmd() *cobra.Command {
 
 			enableColor := output.IsTerminal(cmd.OutOrStdout())
 			headers := []string{"NAME", "READY", "STATUS", "RESTARTS", "AGE"}
+			if allNamespaces {
+				headers = append([]string{"NAMESPACE"}, headers...)
+			}
 			if wide {
 				headers = append(headers, "NODE")
 			}
@@ -84,6 +98,9 @@ func newPodsCmd() *cobra.Command {
 			for _, s := range summaries {
 				status := output.ColorizeStatus(s.Status, enableColor)
 				row := []string{s.Name, s.Ready, status, strconv.Itoa(int(s.Restarts)), s.Age}
+				if allNamespaces {
+					row = append([]string{s.Namespace}, row...)
+				}
 				if wide {
 					row = append(row, s.Node)
 				}
@@ -97,6 +114,7 @@ func newPodsCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&wide, "wide", false, "Include node column")
+	cmd.Flags().BoolVarP(&allNamespaces, "all-namespaces", "A", false, "Search target across all namespaces")
 	cmd.Flags().StringVar(&kind, "kind", "", "Target kind override: deployment|statefulset|pod")
 	cmd.Flags().IntVar(&pick, "pick", 0, "Pick match number when multiple targets are found (1-based)")
 
@@ -104,12 +122,17 @@ func newPodsCmd() *cobra.Command {
 }
 
 func listPodsForWorkload(ctx context.Context, bundle *kube.ClientBundle, workload kube.WorkloadRef) ([]corev1.Pod, error) {
+	namespace := workload.Namespace
+	if namespace == "" {
+		namespace = bundle.Namespace
+	}
+
 	switch workload.Kind {
 	case kube.KindPod:
-		pod, err := bundle.Clientset.CoreV1().Pods(bundle.Namespace).Get(ctx, workload.Name, metav1.GetOptions{})
+		pod, err := bundle.Clientset.CoreV1().Pods(namespace).Get(ctx, workload.Name, metav1.GetOptions{})
 		if err != nil {
 			if apierrors.IsNotFound(err) {
-				return nil, &kube.NotFoundError{Namespace: bundle.Namespace, Target: workload.Name, Kind: kube.KindPod}
+				return nil, &kube.NotFoundError{Namespace: namespace, Target: workload.Name, Kind: kube.KindPod}
 			}
 			return nil, WrapExitError(ExitCodeGeneral, err, "get pod %s", workload.Name)
 		}
@@ -118,7 +141,7 @@ func listPodsForWorkload(ctx context.Context, bundle *kube.ClientBundle, workloa
 		if workload.Selector == "" {
 			return nil, NewExitError(ExitCodeGeneral, fmt.Sprintf("workload %s/%s has no pod selector", workload.Kind, workload.Name))
 		}
-		list, err := bundle.Clientset.CoreV1().Pods(bundle.Namespace).List(ctx, metav1.ListOptions{LabelSelector: workload.Selector})
+		list, err := bundle.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: workload.Selector})
 		if err != nil {
 			return nil, WrapExitError(ExitCodeGeneral, err, "list pods with selector %q", workload.Selector)
 		}
