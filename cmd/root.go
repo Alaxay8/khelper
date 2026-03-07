@@ -121,6 +121,8 @@ func init() {
 		newLogsCmd(),
 		newEventsCmd(),
 		newRestartCmd(),
+		newRolloutCmd(),
+		newSetImageCmd(),
 		newShellCmd(),
 		newTopCmd(),
 		newDoctorCmd(),
