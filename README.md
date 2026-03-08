@@ -266,11 +266,31 @@ khelper rollout undo payment --to-revision=3 --timeout=10m
 
 ### Set Image
 
+Aliases: `set-image`, `si`
+
+Supported forms:
+
+- Explicit container assignment: `khelper set-image <target> <container=image> [container=image...]`
+- Shorthand tag update: `khelper set-image <target:tag>`
+
+Target can be plain (`frontend`) or kind-qualified (`deployment/frontend`, `statefulset/db`).
+
 ```bash
-khelper set-image payment app=ghcr.io/acme/payment:v2
-khelper set-image payment app=ghcr.io/acme/payment:v2 sidecar=ghcr.io/acme/sidecar:v2
-khelper set-image payment -A --kind=statefulset db=postgres:16.4
+khelper set-image frontend server=ghcr.io/alaxay8/frontend:v1.0.1 -n shop
+khelper set-image payment app=ghcr.io/acme/payment:v2 sidecar=ghcr.io/acme/sidecar:v2 -n shop
+khelper si frontend:v1.0.1 -n shop
+khelper si deployment/frontend:v1.0.1 -n shop
+khelper si frontend:v1.0.1 -A
 ```
+
+Behavior:
+
+- `target:tag` keeps current registry/repository and changes only the tag.
+- Shorthand updates one container: single-container workloads or a container named like target.
+- If shorthand is ambiguous for multi-container workloads, use explicit `container=image`.
+- Digest-pinned images (`@sha256:...`) require explicit `container=image`.
+- `--kind` has priority. Without `--kind`, resolution tries deployment then statefulset.
+- If both deployment and statefulset match and output is TTY, `khelper` asks to choose by number. In non-interactive mode it returns an error and asks for `--kind`.
 
 ### Doctor (diagnostics)
 
@@ -373,4 +393,3 @@ make release
 - `4` usage/config error
 - `5` unavailable dependency (for example metrics API not installed)
 - `6` diagnostics findings detected by `doctor` (`warning`/`error` severity)
-

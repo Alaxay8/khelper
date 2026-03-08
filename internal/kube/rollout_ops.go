@@ -231,6 +231,41 @@ func SetWorkloadImages(ctx context.Context, client kubernetes.Interface, namespa
 	}
 }
 
+// ResolveTagImageAssignments builds container=image updates from an existing workload image and a new tag.
+// It updates exactly one container chosen from the pod template based on containerHint and workload shape.
+func ResolveTagImageAssignments(ctx context.Context, client kubernetes.Interface, namespace, kind, name, containerHint, tag string) (map[string]string, error) {
+	kind, err := normalizeRolloutKind(kind)
+	if err != nil {
+		return nil, err
+	}
+
+	var podSpec *corev1.PodSpec
+	switch kind {
+	case KindDeployment:
+		dep, err := client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil, &NotFoundError{Namespace: namespace, Target: name, Kind: KindDeployment}
+			}
+			return nil, fmt.Errorf("get deployment %s: %w", name, err)
+		}
+		podSpec = &dep.Spec.Template.Spec
+	case KindStatefulSet:
+		sts, err := client.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil, &NotFoundError{Namespace: namespace, Target: name, Kind: KindStatefulSet}
+			}
+			return nil, fmt.Errorf("get statefulset %s: %w", name, err)
+		}
+		podSpec = &sts.Spec.Template.Spec
+	default:
+		return nil, fmt.Errorf("set-image supports only deployment/statefulset, got %q", kind)
+	}
+
+	return buildTagImageAssignments(*podSpec, containerHint, tag)
+}
+
 func listDeploymentHistory(ctx context.Context, client kubernetes.Interface, namespace, name string) ([]RolloutHistoryEntry, error) {
 	dep, err := client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
@@ -496,6 +531,70 @@ func applyContainerImageUpdates(podSpec *corev1.PodSpec, updates map[string]stri
 	}
 
 	return found, nil
+}
+
+func buildTagImageAssignments(podSpec corev1.PodSpec, containerHint, tag string) (map[string]string, error) {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return nil, fmt.Errorf("image tag is required")
+	}
+
+	containerHint = strings.TrimSpace(containerHint)
+	containers := podSpec.Containers
+	if len(containers) == 0 {
+		return nil, fmt.Errorf("workload pod template has no containers")
+	}
+
+	var selected *corev1.Container
+	if len(containers) == 1 {
+		selected = &containers[0]
+	} else if containerHint != "" {
+		for i := range containers {
+			if containers[i].Name == containerHint {
+				selected = &containers[i]
+				break
+			}
+		}
+	}
+
+	if selected == nil {
+		available := make([]string, 0, len(containers))
+		for i := range containers {
+			available = append(available, containers[i].Name)
+		}
+		sort.Strings(available)
+		return nil, fmt.Errorf("multiple containers found (%s); use explicit container=image assignment", strings.Join(available, ", "))
+	}
+
+	nextImage, err := imageWithTag(selected.Image, tag)
+	if err != nil {
+		return nil, fmt.Errorf("build image for container %q: %w", selected.Name, err)
+	}
+
+	return map[string]string{selected.Name: nextImage}, nil
+}
+
+func imageWithTag(image, tag string) (string, error) {
+	image = strings.TrimSpace(image)
+	tag = strings.TrimSpace(tag)
+	if image == "" {
+		return "", fmt.Errorf("current image is empty")
+	}
+	if tag == "" {
+		return "", fmt.Errorf("image tag is required")
+	}
+	if strings.Contains(image, "@") {
+		return "", fmt.Errorf("current image %q is digest-pinned; use explicit container=image", image)
+	}
+
+	lastSlash := strings.LastIndex(image, "/")
+	lastColon := strings.LastIndex(image, ":")
+	base := image
+	if lastColon > lastSlash {
+		base = image[:lastColon]
+	}
+
+	return base + ":" + tag, nil
 }
 
 func parseDeploymentRevision(annotations map[string]string) int64 {
