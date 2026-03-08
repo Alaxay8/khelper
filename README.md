@@ -6,7 +6,7 @@ It uses `client-go` directly (no shelling out to `kubectl`), reads kubeconfig th
 
 ## Features
 
-- Short commands for pods, logs, events, restart, shell, metrics, context, and namespace workflows
+- Short commands for pods, logs, events, rollout, restart, set-image, shell, metrics, context, and namespace workflows
 - `doctor` diagnostics command for fast root-cause hints on broken workloads/pods
 - Deterministic target resolution (`deployment -> statefulset -> pod` by default)
 - Optional cross-namespace target resolution via `--all-namespaces` (`-A`)
@@ -22,7 +22,7 @@ It uses `client-go` directly (no shelling out to `kubectl`), reads kubeconfig th
 Use this if you just want the CLI and do not need the source tree.
 
 ```bash
-go install github.com/alaxay8/khelper@latest
+go install github.com/alaxay8/khelper@v0.1.2
 
 BIN_DIR="$(go env GOBIN)"
 [ -z "$BIN_DIR" ] && BIN_DIR="$(go env GOPATH)/bin"
@@ -34,7 +34,7 @@ khelper version
 Install without sudo:
 
 ```bash
-go install github.com/alaxay8/khelper@latest
+go install github.com/alaxay8/khelper@v0.1.2
 
 BIN_DIR="$(go env GOBIN)"
 [ -z "$BIN_DIR" ] && BIN_DIR="$(go env GOPATH)/bin"
@@ -254,6 +254,43 @@ khelper events payment --kind=deployment --pick=2 -o json
 khelper restart payment
 khelper restart payment --kind=deployment --timeout=10m
 ```
+
+### Rollout
+
+```bash
+khelper rollout status payment
+khelper rollout status payment -A --kind=deployment --pick=2
+khelper rollout history payment --kind=deployment
+khelper rollout undo payment --to-revision=3 --timeout=10m
+```
+
+### Set Image
+
+Aliases: `set-image`, `si`
+
+Supported forms:
+
+- Explicit container assignment: `khelper set-image <target> <container=image> [container=image...]`
+- Shorthand tag update: `khelper set-image <target:tag>`
+
+Target can be plain (`frontend`) or kind-qualified (`deployment/frontend`, `statefulset/db`).
+
+```bash
+khelper set-image frontend server=ghcr.io/alaxay8/frontend:v1.0.1 -n shop
+khelper set-image payment app=ghcr.io/acme/payment:v2 sidecar=ghcr.io/acme/sidecar:v2 -n shop
+khelper si frontend:v1.0.1 -n shop
+khelper si deployment/frontend:v1.0.1 -n shop
+khelper si frontend:v1.0.1 -A
+```
+
+Behavior:
+
+- `target:tag` keeps current registry/repository and changes only the tag.
+- Shorthand updates one container: single-container workloads or a container named like target.
+- If shorthand is ambiguous for multi-container workloads, use explicit `container=image`.
+- Digest-pinned images (`@sha256:...`) require explicit `container=image`.
+- `--kind` has priority. Without `--kind`, resolution tries deployment then statefulset.
+- If both deployment and statefulset match and output is TTY, `khelper` asks to choose by number. In non-interactive mode it returns an error and asks for `--kind`.
 
 ### Doctor (diagnostics)
 
