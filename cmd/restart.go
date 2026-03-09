@@ -27,9 +27,9 @@ func newRestartCmd() *cobra.Command {
 				return NewExitError(ExitCodeUsage, "restart supports only deployment or statefulset")
 			}
 
-			bundle, err := kube.NewClientBundle(Config())
+			bundle, err := newClientBundle()
 			if err != nil {
-				return WrapExitError(ExitCodeGeneral, err, "initialize kubernetes client")
+				return err
 			}
 
 			resolver := kube.NewResolver(bundle.Clientset)
@@ -50,8 +50,7 @@ func newRestartCmd() *cobra.Command {
 	}
 
 	cmd.Flags().DurationVar(&timeout, "timeout", 5*time.Minute, "Rollout wait timeout")
-	cmd.Flags().StringVar(&kind, "kind", "", "Target kind override: deployment|statefulset")
-	cmd.Flags().IntVar(&pick, "pick", 0, "Pick match number when multiple targets are found (1-based)")
+	addTargetResolveFlags(cmd, &kind, &pick, nil, kindFlagHelpWorkloadOnly, false)
 
 	return cmd
 }

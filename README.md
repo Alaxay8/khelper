@@ -6,7 +6,7 @@ It uses `client-go` directly (no shelling out to `kubectl`), reads kubeconfig th
 
 ## Features
 
-- Short commands for pods, logs, events, rollout, restart, set-image, shell, metrics, context, and namespace workflows
+- Short commands for pods, logs, events, clear, rollout, restart, set-image, shell, metrics, context, and namespace workflows
 - `doctor` diagnostics command for fast root-cause hints on broken workloads/pods
 - Deterministic target resolution (`deployment -> statefulset -> pod` by default)
 - Optional cross-namespace target resolution via `--all-namespaces` (`-A`)
@@ -247,6 +247,23 @@ khelper events payment
 khelper events payment --warnings-only --since=30m
 khelper events payment --kind=deployment --pick=2 -o json
 ```
+
+### Clear
+
+```bash
+khelper clear
+khelper clear evicted
+khelper clear --dry-run
+khelper clear -A --dry-run
+khelper clear -A --yes
+```
+
+Behavior:
+
+- Default target is `evicted` pods.
+- `--all-namespaces, -A` (or `--all`) clears across all namespaces.
+- `--dry-run` shows what would be deleted without deleting.
+- `-A` requires confirmation; use `--yes` to skip prompt (for scripts/CI).
 
 ### Restart
 

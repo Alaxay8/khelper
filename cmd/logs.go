@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"strings"
-	"time"
 
 	"github.com/alaxay8/khelper/internal/kube"
 	"github.com/spf13/cobra"
@@ -30,27 +28,17 @@ func newLogsCmd() *cobra.Command {
 				return NewExitError(ExitCodeUsage, "--container and --all-containers cannot be used together")
 			}
 
-			since := time.Duration(0)
-			if strings.TrimSpace(sinceStr) != "" {
-				parsed, err := time.ParseDuration(sinceStr)
-				if err != nil {
-					return NewExitError(ExitCodeUsage, fmt.Sprintf("invalid --since value %q: %v", sinceStr, err))
-				}
-				if parsed < 0 {
-					return NewExitError(ExitCodeUsage, "--since must be a non-negative duration")
-				}
-				since = parsed
-			}
-
-			bundle, err := kube.NewClientBundle(Config())
+			since, err := parseNonNegativeDurationFlag("since", sinceStr, 0)
 			if err != nil {
-				return WrapExitError(ExitCodeGeneral, err, "initialize kubernetes client")
+				return err
 			}
 
-			namespaceScope := bundle.Namespace
-			if allNamespaces {
-				namespaceScope = kube.NamespaceAll
+			bundle, err := newClientBundle()
+			if err != nil {
+				return err
 			}
+
+			namespaceScope := resolveNamespaceScope(bundle.Namespace, allNamespaces)
 
 			resolver := kube.NewResolver(bundle.Clientset)
 			resolved, err := resolver.ResolvePod(cmd.Context(), namespaceScope, target, kind, pick)
@@ -81,9 +69,7 @@ func newLogsCmd() *cobra.Command {
 	cmd.Flags().Int64Var(&tail, "tail", 200, "Number of recent log lines to show")
 	cmd.Flags().StringVar(&container, "container", "", "Container name")
 	cmd.Flags().BoolVar(&allContainers, "all-containers", false, "Show logs for all containers")
-	cmd.Flags().BoolVarP(&allNamespaces, "all-namespaces", "A", false, "Search target across all namespaces")
-	cmd.Flags().StringVar(&kind, "kind", "", "Target kind override: deployment|statefulset|pod")
-	cmd.Flags().IntVar(&pick, "pick", 0, "Pick match number when multiple targets are found (1-based)")
+	addTargetResolveFlags(cmd, &kind, &pick, &allNamespaces, kindFlagHelpWithPod, true)
 
 	return cmd
 }

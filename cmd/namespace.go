@@ -32,9 +32,9 @@ func newNamespaceListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List namespaces in the cluster",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			bundle, err := kube.NewClientBundle(Config())
+			bundle, err := newClientBundle()
 			if err != nil {
-				return WrapExitError(ExitCodeGeneral, err, "initialize kubernetes client")
+				return err
 			}
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
@@ -54,11 +54,9 @@ func newNamespaceListCmd() *cobra.Command {
 				return rows[i].Name < rows[j].Name
 			})
 
-			settings := Config()
-			if settings.Output == "json" {
-				if err := output.PrintJSON(cmd.OutOrStdout(), rows); err != nil {
-					return WrapExitError(ExitCodeGeneral, err, "write JSON output")
-				}
+			if handled, err := writeJSONIfRequested(cmd, rows); err != nil {
+				return err
+			} else if handled {
 				return nil
 			}
 

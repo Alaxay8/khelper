@@ -28,9 +28,9 @@ func newTopCmd() *cobra.Command {
 				pods = true
 			}
 
-			bundle, err := kube.NewClientBundle(Config())
+			bundle, err := newClientBundle()
 			if err != nil {
-				return WrapExitError(ExitCodeGeneral, err, "initialize kubernetes client")
+				return err
 			}
 
 			metricsClient, err := kube.NewMetricsClient(bundle.RESTConfig)
@@ -55,16 +55,14 @@ func newTopCmd() *cobra.Command {
 				}
 			}
 
-			settings := Config()
-			if settings.Output == "json" {
-				payload := topOutput{
-					Namespace: bundle.Namespace,
-					Pods:      podMetrics,
-					Nodes:     nodeMetrics,
-				}
-				if err := output.PrintJSON(cmd.OutOrStdout(), payload); err != nil {
-					return WrapExitError(ExitCodeGeneral, err, "write JSON output")
-				}
+			payload := topOutput{
+				Namespace: bundle.Namespace,
+				Pods:      podMetrics,
+				Nodes:     nodeMetrics,
+			}
+			if handled, err := writeJSONIfRequested(cmd, payload); err != nil {
+				return err
+			} else if handled {
 				return nil
 			}
 

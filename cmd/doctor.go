@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -28,31 +27,21 @@ func newDoctorCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target := args[0]
 
-			since := time.Hour
-			if strings.TrimSpace(sinceStr) != "" {
-				parsed, err := time.ParseDuration(sinceStr)
-				if err != nil {
-					return NewExitError(ExitCodeUsage, fmt.Sprintf("invalid --since value %q: %v", sinceStr, err))
-				}
-				if parsed < 0 {
-					return NewExitError(ExitCodeUsage, "--since must be a non-negative duration")
-				}
-				since = parsed
+			since, err := parseNonNegativeDurationFlag("since", sinceStr, time.Hour)
+			if err != nil {
+				return err
 			}
 
 			if logsTail < 0 {
 				return NewExitError(ExitCodeUsage, "--logs-tail must be a non-negative integer")
 			}
 
-			bundle, err := kube.NewClientBundle(Config())
+			bundle, err := newClientBundle()
 			if err != nil {
-				return WrapExitError(ExitCodeGeneral, err, "initialize kubernetes client")
+				return err
 			}
 
-			namespaceScope := bundle.Namespace
-			if allNamespaces {
-				namespaceScope = kube.NamespaceAll
-			}
+			namespaceScope := resolveNamespaceScope(bundle.Namespace, allNamespaces)
 
 			snapshot, err := doctor.Collect(cmd.Context(), bundle, target, doctor.CollectOptions{
 				Namespace: namespaceScope,
@@ -79,11 +68,9 @@ func newDoctorCmd() *cobra.Command {
 			}
 
 			findings := doctor.Evaluate(snapshot, doctor.DefaultRules())
-			if Config().Output == "json" {
-				if err := output.PrintJSON(cmd.OutOrStdout(), findings); err != nil {
-					return WrapExitError(ExitCodeGeneral, err, "write JSON output")
-				}
-			} else {
+			if handled, err := writeJSONIfRequested(cmd, findings); err != nil {
+				return err
+			} else if !handled {
 				table := output.NewTable("SEVERITY", "CHECK", "OBJECT", "MESSAGE", "ACTION")
 				if len(findings) == 0 {
 					table.AddRow("INFO", "summary", snapshot.Workload.Kind+"/"+snapshot.Workload.Name, "No findings detected", "-")
@@ -110,9 +97,7 @@ func newDoctorCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&kind, "kind", "", "Target kind override: deployment|statefulset|pod")
-	cmd.Flags().IntVar(&pick, "pick", 0, "Pick match number when multiple targets are found (1-based)")
-	cmd.Flags().BoolVarP(&allNamespaces, "all-namespaces", "A", false, "Search target across all namespaces")
+	addTargetResolveFlags(cmd, &kind, &pick, &allNamespaces, kindFlagHelpWithPod, true)
 	cmd.Flags().StringVar(&sinceStr, "since", "1h", "Analyze warning events newer than this duration (e.g. 30m, 2h)")
 	cmd.Flags().Int64Var(&logsTail, "logs-tail", 120, "Tail lines to include from selected pod container for evidence (0 disables)")
 	cmd.Flags().StringVar(&container, "container", "", "Container name for --logs-tail evidence")

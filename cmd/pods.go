@@ -37,17 +37,13 @@ func newPodsCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target := args[0]
-			settings := Config()
 
-			bundle, err := kube.NewClientBundle(settings)
+			bundle, err := newClientBundle()
 			if err != nil {
-				return WrapExitError(ExitCodeGeneral, err, "initialize kubernetes client")
+				return err
 			}
 
-			namespaceScope := bundle.Namespace
-			if allNamespaces {
-				namespaceScope = kube.NamespaceAll
-			}
+			namespaceScope := resolveNamespaceScope(bundle.Namespace, allNamespaces)
 
 			resolver := kube.NewResolver(bundle.Clientset)
 			workload, err := resolver.ResolveWorkload(cmd.Context(), namespaceScope, target, kind, pick)
@@ -79,10 +75,9 @@ func newPodsCmd() *cobra.Command {
 				summaries = append(summaries, summary)
 			}
 
-			if settings.Output == "json" {
-				if err := output.PrintJSON(cmd.OutOrStdout(), summaries); err != nil {
-					return WrapExitError(ExitCodeGeneral, err, "write JSON output")
-				}
+			if handled, err := writeJSONIfRequested(cmd, summaries); err != nil {
+				return err
+			} else if handled {
 				return nil
 			}
 
@@ -114,9 +109,7 @@ func newPodsCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&wide, "wide", false, "Include node column")
-	cmd.Flags().BoolVarP(&allNamespaces, "all-namespaces", "A", false, "Search target across all namespaces")
-	cmd.Flags().StringVar(&kind, "kind", "", "Target kind override: deployment|statefulset|pod")
-	cmd.Flags().IntVar(&pick, "pick", 0, "Pick match number when multiple targets are found (1-based)")
+	addTargetResolveFlags(cmd, &kind, &pick, &allNamespaces, kindFlagHelpWithPod, true)
 
 	return cmd
 }
