@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/alaxay8/khelper/internal/kube"
-	"github.com/alaxay8/khelper/pkg/output"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -102,15 +101,12 @@ Kind resolution:
 				return NewExitError(ExitCodeUsage, "set-image supports only deployment or statefulset")
 			}
 
-			bundle, err := kube.NewClientBundle(Config())
+			bundle, err := newClientBundle()
 			if err != nil {
-				return WrapExitError(ExitCodeGeneral, err, "initialize kubernetes client")
+				return err
 			}
 
-			namespaceScope := bundle.Namespace
-			if allNamespaces {
-				namespaceScope = kube.NamespaceAll
-			}
+			namespaceScope := resolveNamespaceScope(bundle.Namespace, allNamespaces)
 
 			resolver := kube.NewResolver(bundle.Clientset)
 			workload, err := resolveSetImageWorkload(cmd.Context(), resolver, namespaceScope, input.Target, effectiveKind, pick, cmd.InOrStdin(), cmd.OutOrStdout())
@@ -139,10 +135,9 @@ Kind resolution:
 				return WrapExitError(ExitCodeGeneral, err, "set image for %s/%s", workload.Kind, workload.Name)
 			}
 
-			if Config().Output == "json" {
-				if err := output.PrintJSON(cmd.OutOrStdout(), result); err != nil {
-					return WrapExitError(ExitCodeGeneral, err, "write JSON output")
-				}
+			if handled, err := writeJSONIfRequested(cmd, result); err != nil {
+				return err
+			} else if handled {
 				return nil
 			}
 
@@ -151,9 +146,7 @@ Kind resolution:
 		},
 	}
 
-	cmd.Flags().StringVar(&kind, "kind", "", "Target kind override: deployment|statefulset")
-	cmd.Flags().IntVar(&pick, "pick", 0, "Pick match number when multiple targets are found (1-based)")
-	cmd.Flags().BoolVarP(&allNamespaces, "all-namespaces", "A", false, "Search target across all namespaces")
+	addTargetResolveFlags(cmd, &kind, &pick, &allNamespaces, kindFlagHelpWorkloadOnly, true)
 
 	return cmd
 }

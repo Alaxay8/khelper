@@ -52,10 +52,9 @@ func newContextListCmd() *cobra.Command {
 				})
 			}
 
-			if settings.Output == "json" {
-				if err := output.PrintJSON(cmd.OutOrStdout(), rows); err != nil {
-					return WrapExitError(ExitCodeGeneral, err, "write JSON output")
-				}
+			if handled, err := writeJSONIfRequested(cmd, rows); err != nil {
+				return err
+			} else if handled {
 				return nil
 			}
 

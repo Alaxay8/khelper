@@ -41,15 +41,12 @@ func newRolloutStatusCmd() *cobra.Command {
 				return NewExitError(ExitCodeUsage, "rollout status supports only deployment or statefulset")
 			}
 
-			bundle, err := kube.NewClientBundle(Config())
+			bundle, err := newClientBundle()
 			if err != nil {
-				return WrapExitError(ExitCodeGeneral, err, "initialize kubernetes client")
+				return err
 			}
 
-			namespaceScope := bundle.Namespace
-			if allNamespaces {
-				namespaceScope = kube.NamespaceAll
-			}
+			namespaceScope := resolveNamespaceScope(bundle.Namespace, allNamespaces)
 
 			resolver := kube.NewResolver(bundle.Clientset)
 			workload, err := resolveRestartWorkload(cmd.Context(), resolver, namespaceScope, args[0], kind, pick)
@@ -62,10 +59,9 @@ func newRolloutStatusCmd() *cobra.Command {
 				return WrapExitError(ExitCodeGeneral, err, "get rollout status for %s/%s", workload.Kind, workload.Name)
 			}
 
-			if Config().Output == "json" {
-				if err := output.PrintJSON(cmd.OutOrStdout(), status); err != nil {
-					return WrapExitError(ExitCodeGeneral, err, "write JSON output")
-				}
+			if handled, err := writeJSONIfRequested(cmd, status); err != nil {
+				return err
+			} else if handled {
 				return nil
 			}
 
@@ -112,9 +108,7 @@ func newRolloutStatusCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&kind, "kind", "", "Target kind override: deployment|statefulset")
-	cmd.Flags().IntVar(&pick, "pick", 0, "Pick match number when multiple targets are found (1-based)")
-	cmd.Flags().BoolVarP(&allNamespaces, "all-namespaces", "A", false, "Search target across all namespaces")
+	addTargetResolveFlags(cmd, &kind, &pick, &allNamespaces, kindFlagHelpWorkloadOnly, true)
 
 	return cmd
 }
@@ -133,15 +127,12 @@ func newRolloutHistoryCmd() *cobra.Command {
 				return NewExitError(ExitCodeUsage, "rollout history supports only deployment or statefulset")
 			}
 
-			bundle, err := kube.NewClientBundle(Config())
+			bundle, err := newClientBundle()
 			if err != nil {
-				return WrapExitError(ExitCodeGeneral, err, "initialize kubernetes client")
+				return err
 			}
 
-			namespaceScope := bundle.Namespace
-			if allNamespaces {
-				namespaceScope = kube.NamespaceAll
-			}
+			namespaceScope := resolveNamespaceScope(bundle.Namespace, allNamespaces)
 
 			resolver := kube.NewResolver(bundle.Clientset)
 			workload, err := resolveRestartWorkload(cmd.Context(), resolver, namespaceScope, args[0], kind, pick)
@@ -154,10 +145,9 @@ func newRolloutHistoryCmd() *cobra.Command {
 				return WrapExitError(ExitCodeGeneral, err, "get rollout history for %s/%s", workload.Kind, workload.Name)
 			}
 
-			if Config().Output == "json" {
-				if err := output.PrintJSON(cmd.OutOrStdout(), history); err != nil {
-					return WrapExitError(ExitCodeGeneral, err, "write JSON output")
-				}
+			if handled, err := writeJSONIfRequested(cmd, history); err != nil {
+				return err
+			} else if handled {
 				return nil
 			}
 
@@ -213,9 +203,7 @@ func newRolloutHistoryCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&kind, "kind", "", "Target kind override: deployment|statefulset")
-	cmd.Flags().IntVar(&pick, "pick", 0, "Pick match number when multiple targets are found (1-based)")
-	cmd.Flags().BoolVarP(&allNamespaces, "all-namespaces", "A", false, "Search target across all namespaces")
+	addTargetResolveFlags(cmd, &kind, &pick, &allNamespaces, kindFlagHelpWorkloadOnly, true)
 
 	return cmd
 }
@@ -239,15 +227,12 @@ func newRolloutUndoCmd() *cobra.Command {
 				return NewExitError(ExitCodeUsage, "--to-revision must be >= 0")
 			}
 
-			bundle, err := kube.NewClientBundle(Config())
+			bundle, err := newClientBundle()
 			if err != nil {
-				return WrapExitError(ExitCodeGeneral, err, "initialize kubernetes client")
+				return err
 			}
 
-			namespaceScope := bundle.Namespace
-			if allNamespaces {
-				namespaceScope = kube.NamespaceAll
-			}
+			namespaceScope := resolveNamespaceScope(bundle.Namespace, allNamespaces)
 
 			resolver := kube.NewResolver(bundle.Clientset)
 			workload, err := resolveRestartWorkload(cmd.Context(), resolver, namespaceScope, args[0], kind, pick)
@@ -260,10 +245,9 @@ func newRolloutUndoCmd() *cobra.Command {
 				return WrapExitError(ExitCodeGeneral, err, "undo rollout for %s/%s", workload.Kind, workload.Name)
 			}
 
-			if Config().Output == "json" {
-				if err := output.PrintJSON(cmd.OutOrStdout(), result); err != nil {
-					return WrapExitError(ExitCodeGeneral, err, "write JSON output")
-				}
+			if handled, err := writeJSONIfRequested(cmd, result); err != nil {
+				return err
+			} else if handled {
 				return nil
 			}
 
@@ -276,9 +260,7 @@ func newRolloutUndoCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&kind, "kind", "", "Target kind override: deployment|statefulset")
-	cmd.Flags().IntVar(&pick, "pick", 0, "Pick match number when multiple targets are found (1-based)")
-	cmd.Flags().BoolVarP(&allNamespaces, "all-namespaces", "A", false, "Search target across all namespaces")
+	addTargetResolveFlags(cmd, &kind, &pick, &allNamespaces, kindFlagHelpWorkloadOnly, true)
 	cmd.Flags().Int64Var(&toRevision, "to-revision", 0, "Roll back to specific revision (default: previous)")
 	cmd.Flags().DurationVar(&timeout, "timeout", 5*time.Minute, "Rollout wait timeout (set 0 to skip waiting)")
 

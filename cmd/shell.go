@@ -23,9 +23,9 @@ func newShellCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target := args[0]
-			bundle, err := kube.NewClientBundle(Config())
+			bundle, err := newClientBundle()
 			if err != nil {
-				return WrapExitError(ExitCodeGeneral, err, "initialize kubernetes client")
+				return err
 			}
 
 			resolver := kube.NewResolver(bundle.Clientset)
@@ -76,8 +76,7 @@ func newShellCmd() *cobra.Command {
 	cmd.Flags().StringVar(&container, "container", "", "Container name")
 	cmd.Flags().StringVar(&shellCmd, "command", "", "Shell command to run (bash|sh)")
 	cmd.Flags().BoolVar(&tty, "tty", true, "Allocate a TTY")
-	cmd.Flags().StringVar(&kind, "kind", "", "Target kind override: deployment|statefulset|pod")
-	cmd.Flags().IntVar(&pick, "pick", 0, "Pick match number when multiple targets are found (1-based)")
+	addTargetResolveFlags(cmd, &kind, &pick, nil, kindFlagHelpWithPod, false)
 
 	return cmd
 }

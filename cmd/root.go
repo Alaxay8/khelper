@@ -120,6 +120,7 @@ func init() {
 		newPodsCmd(),
 		newLogsCmd(),
 		newEventsCmd(),
+		newClearCmd(),
 		newRestartCmd(),
 		newRolloutCmd(),
 		newSetImageCmd(),

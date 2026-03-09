@@ -46,21 +46,14 @@ func newEventsCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target := args[0]
 
-			since := time.Hour
-			if strings.TrimSpace(sinceStr) != "" {
-				parsed, err := time.ParseDuration(sinceStr)
-				if err != nil {
-					return NewExitError(ExitCodeUsage, fmt.Sprintf("invalid --since value %q: %v", sinceStr, err))
-				}
-				if parsed < 0 {
-					return NewExitError(ExitCodeUsage, "--since must be a non-negative duration")
-				}
-				since = parsed
+			since, err := parseNonNegativeDurationFlag("since", sinceStr, time.Hour)
+			if err != nil {
+				return err
 			}
 
-			bundle, err := kube.NewClientBundle(Config())
+			bundle, err := newClientBundle()
 			if err != nil {
-				return WrapExitError(ExitCodeGeneral, err, "initialize kubernetes client")
+				return err
 			}
 
 			resolver := kube.NewResolver(bundle.Clientset)
@@ -89,10 +82,9 @@ func newEventsCmd() *cobra.Command {
 			filtered := filterRelatedEvents(eventList.Items, scope, since, now, warningsOnly)
 			summaries := summarizeEvents(filtered)
 
-			if Config().Output == "json" {
-				if err := output.PrintJSON(cmd.OutOrStdout(), summaries); err != nil {
-					return WrapExitError(ExitCodeGeneral, err, "write JSON output")
-				}
+			if handled, err := writeJSONIfRequested(cmd, summaries); err != nil {
+				return err
+			} else if handled {
 				return nil
 			}
 
@@ -126,8 +118,7 @@ func newEventsCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&kind, "kind", "", "Target kind override: deployment|statefulset|pod")
-	cmd.Flags().IntVar(&pick, "pick", 0, "Pick match number when multiple targets are found (1-based)")
+	addTargetResolveFlags(cmd, &kind, &pick, nil, kindFlagHelpWithPod, false)
 	cmd.Flags().StringVar(&sinceStr, "since", "1h", "Show events newer than this duration (e.g. 30m, 2h)")
 	cmd.Flags().BoolVar(&warningsOnly, "warnings-only", false, "Show only Warning events")
 
