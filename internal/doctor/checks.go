@@ -12,121 +12,137 @@ const restartWarningThreshold int32 = 3
 
 func checkContainerWaitingState(snapshot *Snapshot) []Finding {
 	findings := make([]Finding, 0)
-	reasons := map[string]struct{}{
-		"CrashLoopBackOff": {},
-		"ImagePullBackOff": {},
-		"ErrImagePull":     {},
-	}
 
 	for _, pod := range snapshot.Pods {
-		for _, status := range pod.Status.InitContainerStatuses {
-			findings = append(findings, waitingStateFinding(snapshot, pod, status, reasons)...)
-		}
-		for _, status := range pod.Status.ContainerStatuses {
-			findings = append(findings, waitingStateFinding(snapshot, pod, status, reasons)...)
+		for _, status := range allContainerStatuses(pod) {
+			finding, ok := waitingStateFinding(snapshot, pod.Name, status)
+			if !ok {
+				continue
+			}
+			findings = append(findings, finding)
 		}
 	}
 
 	return findings
 }
 
-func waitingStateFinding(snapshot *Snapshot, pod corev1.Pod, status corev1.ContainerStatus, reasons map[string]struct{}) []Finding {
+func waitingStateFinding(snapshot *Snapshot, podName string, status corev1.ContainerStatus) (Finding, bool) {
 	if status.State.Waiting == nil {
-		return nil
-	}
-	reason := status.State.Waiting.Reason
-	if _, ok := reasons[reason]; !ok {
-		return nil
+		return Finding{}, false
 	}
 
-	action := "Inspect logs and recent config/image changes for this container"
-	switch reason {
-	case "ImagePullBackOff", "ErrImagePull":
-		action = "Verify image name/tag, registry reachability, and imagePullSecrets"
-	case "CrashLoopBackOff":
-		action = "Inspect container logs and startup config to fix repeated crashes"
+	reason := status.State.Waiting.Reason
+	action, ok := waitingStateAction(reason)
+	if !ok {
+		return Finding{}, false
 	}
+
+	waitingMessage := normalizeSpace(status.State.Waiting.Message)
 
 	evidence := map[string]any{
-		"pod":          pod.Name,
+		"pod":          podName,
 		"container":    status.Name,
 		"reason":       reason,
 		"restartCount": status.RestartCount,
 	}
-	if status.State.Waiting.Message != "" {
-		evidence["stateMessage"] = normalizeSpace(status.State.Waiting.Message)
+	if waitingMessage != "" {
+		evidence["stateMessage"] = waitingMessage
 	}
-	evidence = appendLogEvidence(snapshot, pod.Name, status.Name, evidence)
+	evidence = appendLogEvidence(snapshot, podName, status.Name, evidence)
 
 	message := fmt.Sprintf("Container %s is waiting with %s", status.Name, reason)
-	if status.State.Waiting.Message != "" {
-		message += ": " + normalizeSpace(status.State.Waiting.Message)
+	if waitingMessage != "" {
+		message += ": " + waitingMessage
 	}
 
-	return []Finding{{
+	return Finding{
 		Severity: SeverityError,
 		Check:    "container-state",
-		Object:   fmt.Sprintf("pod/%s", pod.Name),
+		Object:   podObject(podName),
 		Message:  message,
 		Action:   action,
 		Evidence: evidence,
-	}}
+	}, true
+}
+
+func waitingStateAction(reason string) (string, bool) {
+	switch reason {
+	case "ImagePullBackOff", "ErrImagePull":
+		return "Verify image name/tag, registry reachability, and imagePullSecrets", true
+	case "CrashLoopBackOff":
+		return "Inspect container logs and startup config to fix repeated crashes", true
+	default:
+		return "", false
+	}
 }
 
 func checkOOMAndRestarts(snapshot *Snapshot) []Finding {
 	findings := make([]Finding, 0)
 
 	for _, pod := range snapshot.Pods {
-		statuses := make([]corev1.ContainerStatus, 0, len(pod.Status.InitContainerStatuses)+len(pod.Status.ContainerStatuses))
-		statuses = append(statuses, pod.Status.InitContainerStatuses...)
-		statuses = append(statuses, pod.Status.ContainerStatuses...)
-
-		for _, status := range statuses {
-			if terminated := oomKilledState(status); terminated != nil {
-				evidence := map[string]any{
-					"pod":          pod.Name,
-					"container":    status.Name,
-					"reason":       terminated.Reason,
-					"exitCode":     terminated.ExitCode,
-					"restartCount": status.RestartCount,
-				}
-				if !terminated.FinishedAt.IsZero() {
-					evidence["finishedAt"] = terminated.FinishedAt.Time.UTC().Format(timeLayout)
-				}
-				evidence = appendLogEvidence(snapshot, pod.Name, status.Name, evidence)
-
-				findings = append(findings, Finding{
-					Severity: SeverityError,
-					Check:    "oom-killed",
-					Object:   fmt.Sprintf("pod/%s", pod.Name),
-					Message:  fmt.Sprintf("Container %s was OOMKilled", status.Name),
-					Action:   "Increase memory limits/requests or reduce memory usage in the container",
-					Evidence: evidence,
-				})
+		for _, status := range allContainerStatuses(pod) {
+			if finding, ok := oomKilledFinding(snapshot, pod.Name, status); ok {
+				findings = append(findings, finding)
 			}
 
-			if status.RestartCount >= restartWarningThreshold {
-				evidence := map[string]any{
-					"pod":          pod.Name,
-					"container":    status.Name,
-					"restartCount": status.RestartCount,
-					"threshold":    restartWarningThreshold,
-				}
-				evidence = appendLogEvidence(snapshot, pod.Name, status.Name, evidence)
-
-				findings = append(findings, Finding{
-					Severity: SeverityWarning,
-					Check:    "frequent-restarts",
-					Object:   fmt.Sprintf("pod/%s", pod.Name),
-					Message:  fmt.Sprintf("Container %s restarted %d times", status.Name, status.RestartCount),
-					Action:   "Inspect logs and probe settings to stabilize startup/runtime behavior",
-					Evidence: evidence,
-				})
+			if finding, ok := frequentRestartFinding(snapshot, pod.Name, status); ok {
+				findings = append(findings, finding)
 			}
 		}
 	}
 
 	return findings
+}
+
+func oomKilledFinding(snapshot *Snapshot, podName string, status corev1.ContainerStatus) (Finding, bool) {
+	terminated := oomKilledState(status)
+	if terminated == nil {
+		return Finding{}, false
+	}
+
+	evidence := map[string]any{
+		"pod":          podName,
+		"container":    status.Name,
+		"reason":       terminated.Reason,
+		"exitCode":     terminated.ExitCode,
+		"restartCount": status.RestartCount,
+	}
+	if !terminated.FinishedAt.IsZero() {
+		evidence["finishedAt"] = terminated.FinishedAt.Time.UTC().Format(timeLayout)
+	}
+	evidence = appendLogEvidence(snapshot, podName, status.Name, evidence)
+
+	return Finding{
+		Severity: SeverityError,
+		Check:    "oom-killed",
+		Object:   podObject(podName),
+		Message:  fmt.Sprintf("Container %s was OOMKilled", status.Name),
+		Action:   "Increase memory limits/requests or reduce memory usage in the container",
+		Evidence: evidence,
+	}, true
+}
+
+func frequentRestartFinding(snapshot *Snapshot, podName string, status corev1.ContainerStatus) (Finding, bool) {
+	if status.RestartCount < restartWarningThreshold {
+		return Finding{}, false
+	}
+
+	evidence := map[string]any{
+		"pod":          podName,
+		"container":    status.Name,
+		"restartCount": status.RestartCount,
+		"threshold":    restartWarningThreshold,
+	}
+	evidence = appendLogEvidence(snapshot, podName, status.Name, evidence)
+
+	return Finding{
+		Severity: SeverityWarning,
+		Check:    "frequent-restarts",
+		Object:   podObject(podName),
+		Message:  fmt.Sprintf("Container %s restarted %d times", status.Name, status.RestartCount),
+		Action:   "Inspect logs and probe settings to stabilize startup/runtime behavior",
+		Evidence: evidence,
+	}, true
 }
 
 func oomKilledState(status corev1.ContainerStatus) *corev1.ContainerStateTerminated {
@@ -162,7 +178,7 @@ func checkPendingUnschedulable(snapshot *Snapshot) []Finding {
 			findings = append(findings, Finding{
 				Severity: SeverityError,
 				Check:    "pending-unschedulable",
-				Object:   fmt.Sprintf("pod/%s", pod.Name),
+				Object:   podObject(pod.Name),
 				Message:  fmt.Sprintf("Pod is Pending and Unschedulable: %s", normalizeSpace(unschedulable.Message)),
 				Action:   "Check node resources, taints/tolerations, node selectors, and affinity constraints",
 				Evidence: evidence,
@@ -173,7 +189,7 @@ func checkPendingUnschedulable(snapshot *Snapshot) []Finding {
 		findings = append(findings, Finding{
 			Severity: SeverityWarning,
 			Check:    "pending-pod",
-			Object:   fmt.Sprintf("pod/%s", pod.Name),
+			Object:   podObject(pod.Name),
 			Message:  "Pod is Pending and not yet Ready",
 			Action:   "Inspect scheduling and container startup events for this pod",
 			Evidence: map[string]any{"pod": pod.Name, "phase": string(pod.Status.Phase)},
@@ -195,7 +211,13 @@ func findPodCondition(conditions []corev1.PodCondition, conditionType corev1.Pod
 
 func checkProbeFailures(snapshot *Snapshot) []Finding {
 	findings := make([]Finding, 0)
+	findings = append(findings, probeFailureFindingsFromPods(snapshot)...)
+	findings = append(findings, probeFailureFindingsFromEvents(snapshot)...)
+	return findings
+}
 
+func probeFailureFindingsFromPods(snapshot *Snapshot) []Finding {
+	findings := make([]Finding, 0)
 	for _, pod := range snapshot.Pods {
 		for _, status := range pod.Status.ContainerStatuses {
 			// Running-but-not-ready is a strong status signal for readiness/startup probe issues.
@@ -221,7 +243,7 @@ func checkProbeFailures(snapshot *Snapshot) []Finding {
 			findings = append(findings, Finding{
 				Severity: SeverityWarning,
 				Check:    "probe-failure",
-				Object:   fmt.Sprintf("pod/%s", pod.Name),
+				Object:   podObject(pod.Name),
 				Message:  message,
 				Action:   "Review readiness/startup probe endpoints, thresholds, and initial delays",
 				Evidence: evidence,
@@ -229,18 +251,13 @@ func checkProbeFailures(snapshot *Snapshot) []Finding {
 		}
 	}
 
-	for _, event := range snapshot.Events {
-		if !isWarningEvent(event) {
-			continue
-		}
+	return findings
+}
 
-		messageLower := strings.ToLower(event.Message)
-		reasonLower := strings.ToLower(event.Reason)
-		if !(strings.Contains(messageLower, "liveness probe") ||
-			strings.Contains(messageLower, "readiness probe") ||
-			strings.Contains(messageLower, "startup probe") ||
-			strings.Contains(messageLower, "probe failed") ||
-			reasonLower == "unhealthy") {
+func probeFailureFindingsFromEvents(snapshot *Snapshot) []Finding {
+	findings := make([]Finding, 0)
+	for _, event := range snapshot.Events {
+		if !isProbeFailureEvent(event) {
 			continue
 		}
 
@@ -257,6 +274,21 @@ func checkProbeFailures(snapshot *Snapshot) []Finding {
 	}
 
 	return findings
+}
+
+func isProbeFailureEvent(event corev1.Event) bool {
+	if !isWarningEvent(event) {
+		return false
+	}
+	if strings.EqualFold(event.Reason, "Unhealthy") {
+		return true
+	}
+
+	messageLower := strings.ToLower(event.Message)
+	return strings.Contains(messageLower, "liveness probe") ||
+		strings.Contains(messageLower, "readiness probe") ||
+		strings.Contains(messageLower, "startup probe") ||
+		strings.Contains(messageLower, "probe failed")
 }
 
 func checkWorkloadReplicas(snapshot *Snapshot) []Finding {
@@ -430,6 +462,17 @@ func appendLogEvidence(snapshot *Snapshot, podName, containerName string, eviden
 		evidence["logError"] = snapshot.LogSnippet.Error
 	}
 	return evidence
+}
+
+func allContainerStatuses(pod corev1.Pod) []corev1.ContainerStatus {
+	statuses := make([]corev1.ContainerStatus, 0, len(pod.Status.InitContainerStatuses)+len(pod.Status.ContainerStatuses))
+	statuses = append(statuses, pod.Status.InitContainerStatuses...)
+	statuses = append(statuses, pod.Status.ContainerStatuses...)
+	return statuses
+}
+
+func podObject(name string) string {
+	return "pod/" + name
 }
 
 const timeLayout = "2006-01-02T15:04:05Z"
