@@ -13,6 +13,18 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 )
 
+type execInPodRunner func(
+	ctx context.Context,
+	restCfg *rest.Config,
+	client kubernetes.Interface,
+	namespace, podName, container string,
+	command []string,
+	tty bool,
+	stdin io.Reader,
+	stdout io.Writer,
+	stderr io.Writer,
+) error
+
 func ExecInPod(
 	ctx context.Context,
 	restCfg *rest.Config,
@@ -70,17 +82,29 @@ func DetectShell(
 	podName,
 	container string,
 ) (string, error) {
+	return detectShellWithRunner(ctx, restCfg, client, namespace, podName, container, ExecInPod)
+}
+
+func detectShellWithRunner(
+	ctx context.Context,
+	restCfg *rest.Config,
+	client kubernetes.Interface,
+	namespace,
+	podName,
+	container string,
+	runner execInPodRunner,
+) (string, error) {
 	checks := []struct {
 		shell string
 		cmd   []string
 	}{
-		{shell: "bash", cmd: []string{"bash", "-lc", "exit 0"}},
-		{shell: "sh", cmd: []string{"sh", "-lc", "exit 0"}},
+		{shell: "bash", cmd: []string{"bash", "-c", "exit 0"}},
+		{shell: "sh", cmd: []string{"sh", "-c", "exit 0"}},
 	}
 
 	var lastErr error
 	for _, check := range checks {
-		err := ExecInPod(ctx, restCfg, client, namespace, podName, container, check.cmd, false, nil, io.Discard, io.Discard)
+		err := runner(ctx, restCfg, client, namespace, podName, container, check.cmd, false, nil, io.Discard, io.Discard)
 		if err == nil {
 			return check.shell, nil
 		}

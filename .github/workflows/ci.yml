@@ -8,6 +8,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      MIN_COVERAGE: "35.0"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,3 +36,44 @@ jobs:
 
       - name: go test
         run: go test ./...
+
+      - name: go test -race
+        run: go test -race ./...
+
+      - name: go test (coverage)
+        run: |
+          go test -covermode=atomic -coverprofile=coverage.out ./...
+          total="$(go tool cover -func=coverage.out | awk '/^total:/{gsub(/%/,"",$3); print $3}')"
+          echo "Total coverage: ${total}%"
+          awk -v total="$total" -v min="$MIN_COVERAGE" 'BEGIN { exit((total+0) >= (min+0) ? 0 : 1) }' || {
+            echo "Coverage ${total}% is below required ${MIN_COVERAGE}%"
+            exit 1
+          }
+
+  e2e-kind:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Setup kind cluster
+        uses: helm/kind-action@v1.10.0
+        with:
+          cluster_name: khelper-e2e
+
+      - name: Build khelper
+        run: |
+          mkdir -p bin
+          go build -o bin/khelper .
+
+      - name: Run e2e smoke checks
+        run: ./scripts/e2e_kind_smoke.sh ./bin/khelper

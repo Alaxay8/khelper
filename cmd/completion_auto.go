@@ -65,10 +65,19 @@ func shouldAutoInstallCompletion(cmd *cobra.Command) bool {
 		return false
 	}
 
-	switch cmd.Name() {
-	case "__complete", "__completeNoDesc", "completion", "completion-install", "comp-install":
+	if isCompletionCommand(cmd) {
 		return false
-	default:
-		return true
 	}
+
+	return true
+}
+
+func isCompletionCommand(cmd *cobra.Command) bool {
+	for current := cmd; current != nil; current = current.Parent() {
+		switch current.Name() {
+		case "__complete", "__completeNoDesc", "completion", "completion-install", "comp-install":
+			return true
+		}
+	}
+	return false
 }

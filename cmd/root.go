@@ -170,6 +170,11 @@ func exitCode(err error) int {
 		return ExitCodeNotFound
 	}
 
+	var invalidPick *kube.InvalidPickError
+	if errors.As(err, &invalidPick) {
+		return ExitCodeUsage
+	}
+
 	if errors.Is(err, kube.ErrMetricsUnavailable) {
 		return ExitCodeUnavailable
 	}

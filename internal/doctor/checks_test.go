@@ -1,7 +1,9 @@
 package doctor
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/alaxay8/khelper/internal/kube"
 	appsv1 "k8s.io/api/apps/v1"
@@ -110,6 +112,92 @@ func TestChecksNoEventsDoesNotProduceWarningEventFinding(t *testing.T) {
 	}
 }
 
+func TestChecksDetectImagePullBackOffInInitContainer(t *testing.T) {
+	t.Parallel()
+
+	pod := healthyPod("shop", "payment-0")
+	pod.Status.InitContainerStatuses = []corev1.ContainerStatus{{
+		Name:         "init-config",
+		RestartCount: 1,
+		State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{
+			Reason:  "ImagePullBackOff",
+			Message: "Back-off pulling image",
+		}},
+	}}
+
+	snapshot := &Snapshot{
+		Namespace: "shop",
+		Workload:  kube.WorkloadRef{Kind: kube.KindPod, Name: pod.Name},
+		Pods:      []corev1.Pod{pod},
+	}
+
+	findings := Evaluate(snapshot, DefaultRules())
+	finding, ok := findFinding(findings, "container-state", SeverityError)
+	if !ok {
+		t.Fatalf("expected container-state error finding, got %+v", findings)
+	}
+	if !strings.Contains(finding.Action, "imagePullSecrets") {
+		t.Fatalf("expected image pull action guidance, got %q", finding.Action)
+	}
+}
+
+func TestChecksDetectOOMKilledFromLastTerminationState(t *testing.T) {
+	t.Parallel()
+
+	pod := healthyPod("shop", "payment-0")
+	finishedAt := metav1.NewTime(time.Now().UTC().Add(-3 * time.Minute))
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+		Name:         "app",
+		Ready:        true,
+		RestartCount: restartWarningThreshold,
+		State:        corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+		LastTerminationState: corev1.ContainerState{
+			Terminated: &corev1.ContainerStateTerminated{
+				Reason:     "OOMKilled",
+				ExitCode:   137,
+				FinishedAt: finishedAt,
+			},
+		},
+	}}
+
+	snapshot := &Snapshot{
+		Namespace: "shop",
+		Workload:  kube.WorkloadRef{Kind: kube.KindPod, Name: pod.Name},
+		Pods:      []corev1.Pod{pod},
+	}
+
+	findings := Evaluate(snapshot, DefaultRules())
+	if !hasFinding(findings, "oom-killed", SeverityError) {
+		t.Fatalf("expected oom-killed error finding, got %+v", findings)
+	}
+	if !hasFinding(findings, "frequent-restarts", SeverityWarning) {
+		t.Fatalf("expected frequent-restarts warning finding, got %+v", findings)
+	}
+}
+
+func TestChecksDetectProbeFailureFromUnhealthyEvent(t *testing.T) {
+	t.Parallel()
+
+	event := corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Name: "payment-probe", Namespace: "shop"},
+		InvolvedObject: corev1.ObjectReference{Kind: "Pod", Name: "payment-0", Namespace: "shop"},
+		Type:           corev1.EventTypeWarning,
+		Reason:         "Unhealthy",
+		Message:        "Readiness probe failed: timeout",
+	}
+
+	snapshot := &Snapshot{
+		Namespace: "shop",
+		Workload:  kube.WorkloadRef{Kind: kube.KindPod, Name: "payment-0"},
+		Events:    []corev1.Event{event},
+	}
+
+	findings := Evaluate(snapshot, DefaultRules())
+	if !hasFinding(findings, "probe-failure", SeverityWarning) {
+		t.Fatalf("expected probe-failure warning finding, got %+v", findings)
+	}
+}
+
 func healthyPod(namespace, name string) corev1.Pod {
 	return corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
@@ -133,4 +221,13 @@ func hasFinding(findings []Finding, check string, severity Severity) bool {
 		}
 	}
 	return false
+}
+
+func findFinding(findings []Finding, check string, severity Severity) (Finding, bool) {
+	for _, finding := range findings {
+		if finding.Check == check && finding.Severity == severity {
+			return finding, true
+		}
+	}
+	return Finding{}, false
 }

@@ -116,31 +116,22 @@ func waitStatefulSetRollout(ctx context.Context, client kubernetes.Interface, na
 			return false, fmt.Errorf("get statefulset %s: %w", name, err)
 		}
 
-		desired := int32(1)
-		if sts.Spec.Replicas != nil {
-			desired = *sts.Spec.Replicas
-		}
+		expectation := statefulSetRolloutExpectationFor(sts)
 
 		if out != nil {
-			_, _ = fmt.Fprintf(out, "  observed=%d generation=%d updated=%d ready=%d desired=%d revision=%s/%s\n",
+			_, _ = fmt.Fprintf(out, "  observed=%d generation=%d updated=%d/%d ready=%d/%d revision=%s/%s\n",
 				sts.Status.ObservedGeneration,
 				sts.Generation,
 				sts.Status.UpdatedReplicas,
+				expectation.ExpectedUpdatedReplicas,
 				sts.Status.ReadyReplicas,
-				desired,
+				expectation.DesiredReplicas,
 				sts.Status.CurrentRevision,
 				sts.Status.UpdateRevision,
 			)
 		}
 
-		done := sts.Status.ObservedGeneration >= sts.Generation &&
-			sts.Status.UpdatedReplicas == desired &&
-			sts.Status.ReadyReplicas == desired
-		if desired > 0 {
-			done = done && sts.Status.CurrentRevision == sts.Status.UpdateRevision
-		}
-
-		return done, nil
+		return isStatefulSetRolloutComplete(sts), nil
 	})
 	if err != nil {
 		return fmt.Errorf("wait for statefulset rollout: %w", err)

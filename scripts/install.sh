@@ -114,8 +114,11 @@ ensure_go() {
 
   if [ "$OS" = "darwin" ]; then
     if has_cmd brew; then
-      run_privileged brew update
-      run_privileged brew install go
+      if [ "$(id -u)" -eq 0 ]; then
+        die "Homebrew must run as a regular user on macOS. Re-run without sudo, or install Go manually: brew install go"
+      fi
+      brew update || die "failed to run: brew update"
+      brew install go || die "failed to run: brew install go"
     else
       die "Go is not installed. Install it manually on macOS: brew install go"
     fi
