@@ -119,16 +119,8 @@ func GetRolloutStatus(ctx context.Context, client kubernetes.Interface, namespac
 			}
 			return nil, fmt.Errorf("get statefulset %s: %w", name, err)
 		}
-		desired := int32(1)
-		if sts.Spec.Replicas != nil {
-			desired = *sts.Spec.Replicas
-		}
-		complete := sts.Status.ObservedGeneration >= sts.Generation &&
-			sts.Status.UpdatedReplicas == desired &&
-			sts.Status.ReadyReplicas == desired
-		if desired > 0 {
-			complete = complete && sts.Status.CurrentRevision == sts.Status.UpdateRevision
-		}
+		expectation := statefulSetRolloutExpectationFor(sts)
+		complete := isStatefulSetRolloutComplete(sts)
 		message := "rollout in progress"
 		if complete {
 			message = "rollout complete"
@@ -141,7 +133,7 @@ func GetRolloutStatus(ctx context.Context, client kubernetes.Interface, namespac
 			UpdateRevision:     sts.Status.UpdateRevision,
 			ObservedGeneration: sts.Status.ObservedGeneration,
 			Generation:         sts.Generation,
-			DesiredReplicas:    desired,
+			DesiredReplicas:    expectation.DesiredReplicas,
 			UpdatedReplicas:    sts.Status.UpdatedReplicas,
 			ReadyReplicas:      sts.Status.ReadyReplicas,
 			Complete:           complete,

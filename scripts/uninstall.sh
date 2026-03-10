@@ -17,6 +17,8 @@ Remove khelper binaries and related files.
 
 Options:
   --workdir <dir>      Extra workdir to clean artifacts from (default: /opt/khelper)
+                       Safety: last path segment must include "khelper"
+                       and system-level directories are rejected
   --minimal            Remove binaries and completions only
   --no-config          Do not remove ~/.khelper.yaml
   --no-artifacts       Do not remove local build artifacts (khelper, bin/, dist/)
@@ -36,6 +38,55 @@ die() {
 
 has_cmd() {
   command -v "$1" >/dev/null 2>&1
+}
+
+normalize_path() {
+  p="$1"
+  if [ -z "$p" ]; then
+    return 1
+  fi
+
+  case "$p" in
+    /*)
+      abs="$p"
+      ;;
+    *)
+      if [ -d "$p" ]; then
+        abs="$(CDPATH= cd -- "$p" && pwd -P)" || return 1
+      else
+        abs="$(pwd -P)/$p"
+      fi
+      ;;
+  esac
+
+  if [ -d "$abs" ]; then
+    abs="$(CDPATH= cd -- "$abs" && pwd -P)" || return 1
+  fi
+
+  printf '%s\n' "$abs"
+}
+
+validate_workdir() {
+  raw="$1"
+  abs="$(normalize_path "$raw")" || die "invalid --workdir path: $raw"
+
+  case "$abs" in
+    "/"|"/bin"|"/sbin"|"/usr"|"/usr/bin"|"/usr/local"|"/etc"|"/var"|"/opt"|"/opt/homebrew"|"/home"|"/Users"|"/tmp")
+      die "unsafe --workdir '$raw': refusing to clean system-level directory '$abs'"
+      ;;
+  esac
+
+  base="$(basename -- "$abs")"
+  lower_base="$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')"
+  case "$lower_base" in
+    *khelper*)
+      ;;
+    *)
+      die "unsafe --workdir '$raw': last path segment must include 'khelper'"
+      ;;
+  esac
+
+  WORKDIR="$abs"
 }
 
 run_privileged() {
@@ -122,6 +173,10 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+if [ "$PURGE_ARTIFACTS" = "true" ]; then
+  validate_workdir "$WORKDIR"
+fi
 
 remove_path "/usr/local/bin/${BINARY_NAME}"
 remove_path "/usr/bin/${BINARY_NAME}"

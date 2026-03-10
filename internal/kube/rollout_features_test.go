@@ -4,6 +4,7 @@ import (
 	"context"
 	"strconv"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -95,6 +96,150 @@ func TestGetRolloutStatusStatefulSetProgressing(t *testing.T) {
 	}
 	if status.UpdateRevision != "db-75c6d87c57" {
 		t.Fatalf("unexpected update revision: %q", status.UpdateRevision)
+	}
+}
+
+func TestGetRolloutStatusStatefulSetPartitionedRollingUpdateCanBeComplete(t *testing.T) {
+	t.Parallel()
+
+	replicas := int32(3)
+	partition := int32(1)
+	sts := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "shop"},
+		Spec: appsv1.StatefulSetSpec{
+			Replicas: &replicas,
+			UpdateStrategy: appsv1.StatefulSetUpdateStrategy{
+				Type: appsv1.RollingUpdateStatefulSetStrategyType,
+				RollingUpdate: &appsv1.RollingUpdateStatefulSetStrategy{
+					Partition: &partition,
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "db", Image: "postgres:16"}}},
+			},
+		},
+		Status: appsv1.StatefulSetStatus{
+			ObservedGeneration: 6,
+			ReadyReplicas:      3,
+			UpdatedReplicas:    2,
+			CurrentRevision:    "db-rev-old",
+			UpdateRevision:     "db-rev-new",
+		},
+	}
+	sts.Generation = 6
+
+	client := fake.NewSimpleClientset(sts)
+
+	status, err := GetRolloutStatus(context.Background(), client, "shop", KindStatefulSet, "db")
+	if err != nil {
+		t.Fatalf("GetRolloutStatus returned error: %v", err)
+	}
+
+	if !status.Complete {
+		t.Fatal("expected partitioned statefulset rollout to be complete")
+	}
+}
+
+func TestGetRolloutStatusStatefulSetOnDeleteCanBeCompleteWithoutAutoUpdate(t *testing.T) {
+	t.Parallel()
+
+	replicas := int32(3)
+	sts := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "shop"},
+		Spec: appsv1.StatefulSetSpec{
+			Replicas: &replicas,
+			UpdateStrategy: appsv1.StatefulSetUpdateStrategy{
+				Type: appsv1.OnDeleteStatefulSetStrategyType,
+			},
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "db", Image: "postgres:16"}}},
+			},
+		},
+		Status: appsv1.StatefulSetStatus{
+			ObservedGeneration: 4,
+			ReadyReplicas:      3,
+			UpdatedReplicas:    0,
+			CurrentRevision:    "db-rev-old",
+			UpdateRevision:     "db-rev-new",
+		},
+	}
+	sts.Generation = 4
+
+	client := fake.NewSimpleClientset(sts)
+
+	status, err := GetRolloutStatus(context.Background(), client, "shop", KindStatefulSet, "db")
+	if err != nil {
+		t.Fatalf("GetRolloutStatus returned error: %v", err)
+	}
+
+	if !status.Complete {
+		t.Fatal("expected onDelete statefulset rollout to be complete without forced update count")
+	}
+}
+
+func TestWaitStatefulSetRolloutPartitionedRollingUpdateCanComplete(t *testing.T) {
+	t.Parallel()
+
+	replicas := int32(3)
+	partition := int32(1)
+	sts := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "shop"},
+		Spec: appsv1.StatefulSetSpec{
+			Replicas: &replicas,
+			UpdateStrategy: appsv1.StatefulSetUpdateStrategy{
+				Type: appsv1.RollingUpdateStatefulSetStrategyType,
+				RollingUpdate: &appsv1.RollingUpdateStatefulSetStrategy{
+					Partition: &partition,
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "db", Image: "postgres:16"}}},
+			},
+		},
+		Status: appsv1.StatefulSetStatus{
+			ObservedGeneration: 7,
+			ReadyReplicas:      3,
+			UpdatedReplicas:    2,
+			CurrentRevision:    "db-rev-old",
+			UpdateRevision:     "db-rev-new",
+		},
+	}
+	sts.Generation = 7
+
+	client := fake.NewSimpleClientset(sts)
+	if err := waitStatefulSetRollout(context.Background(), client, "shop", "db", 100*time.Millisecond, nil); err != nil {
+		t.Fatalf("waitStatefulSetRollout returned error: %v", err)
+	}
+}
+
+func TestWaitStatefulSetRolloutOnDeleteCanCompleteWithoutAutoUpdate(t *testing.T) {
+	t.Parallel()
+
+	replicas := int32(3)
+	sts := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "shop"},
+		Spec: appsv1.StatefulSetSpec{
+			Replicas: &replicas,
+			UpdateStrategy: appsv1.StatefulSetUpdateStrategy{
+				Type: appsv1.OnDeleteStatefulSetStrategyType,
+			},
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "db", Image: "postgres:16"}}},
+			},
+		},
+		Status: appsv1.StatefulSetStatus{
+			ObservedGeneration: 5,
+			ReadyReplicas:      3,
+			UpdatedReplicas:    0,
+			CurrentRevision:    "db-rev-old",
+			UpdateRevision:     "db-rev-new",
+		},
+	}
+	sts.Generation = 5
+
+	client := fake.NewSimpleClientset(sts)
+	if err := waitStatefulSetRollout(context.Background(), client, "shop", "db", 100*time.Millisecond, nil); err != nil {
+		t.Fatalf("waitStatefulSetRollout returned error: %v", err)
 	}
 }
 
