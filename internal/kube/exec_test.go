@@ -106,3 +106,12 @@ func TestDetectShellWithRunnerReturnsErrorWhenNoShellFound(t *testing.T) {
 		t.Fatal("expected error when no shell is available")
 	}
 }
+
+func TestExecInPodRequiresCommand(t *testing.T) {
+	t.Parallel()
+
+	err := ExecInPod(context.Background(), nil, nil, "shop", "payment-0", "app", nil, false, nil, nil, nil)
+	if err == nil {
+		t.Fatal("expected error for empty command")
+	}
+}

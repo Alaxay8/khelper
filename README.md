@@ -399,6 +399,9 @@ make lint
 make test
 make build
 make release
+
+# requires a running Kubernetes cluster context (CI uses kind)
+./scripts/e2e_kind_smoke.sh ./bin/khelper
 ```
 
 ## Exit Codes
