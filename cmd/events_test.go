@@ -1,13 +1,16 @@
 package cmd
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/alaxay8/khelper/internal/kube"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 func TestFilterRelatedEventsAppliesScopeSinceAndWarnings(t *testing.T) {
@@ -205,5 +208,47 @@ func TestFilterRelatedEventsMatchesDeletedDeploymentPodEvents(t *testing.T) {
 	}
 	if filtered[0].Name != "stale-pod-warning" {
 		t.Fatalf("expected stale-pod-warning, got %s", filtered[0].Name)
+	}
+}
+
+func TestRelatedReplicaSetNamesUsesWorkloadNamespace(t *testing.T) {
+	t.Parallel()
+
+	replicaSet := &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "payment-7f4d9b4b5",
+			Namespace: "shop",
+			Labels:    map[string]string{"app": "payment"},
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion: "apps/v1",
+					Kind:       "Deployment",
+					Name:       "payment",
+				},
+			},
+		},
+	}
+
+	bundle := &kube.ClientBundle{
+		Clientset: fake.NewSimpleClientset(replicaSet),
+		Namespace: "default",
+	}
+	workload := kube.WorkloadRef{
+		Kind:      kube.KindDeployment,
+		Name:      "payment",
+		Namespace: "shop",
+		Selector:  "app=payment",
+	}
+
+	names, err := relatedReplicaSetNames(context.Background(), bundle, workload)
+	if err != nil {
+		t.Fatalf("relatedReplicaSetNames returned error: %v", err)
+	}
+
+	if len(names) != 1 {
+		t.Fatalf("expected 1 related ReplicaSet name, got %d", len(names))
+	}
+	if _, ok := names["payment-7f4d9b4b5"]; !ok {
+		t.Fatalf("expected ReplicaSet payment-7f4d9b4b5, got %+v", names)
 	}
 }

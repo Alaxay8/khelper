@@ -95,11 +95,13 @@ Examples:
 ./scripts/install.sh
 ./scripts/install.sh --mode local
 ./scripts/install.sh --mode build
-./scripts/install.sh --mode release --version v0.1.0
+./scripts/install.sh --mode release --version v0.1.0 --checksum <sha256>
 ```
 
 On Linux, `auto` mode can install Go via package manager (`apt`, `dnf`, `yum`, `zypper`, `apk`, `pacman`) if Go is missing.
 It requires root/sudo privileges and internet access.
+
+For `--mode release`, checksum verification is required (`--checksum`) unless you explicitly opt out with `--insecure-no-checksum`.
 
 You can also run:
 
@@ -393,6 +395,8 @@ Given a target like `payment`:
 6. For logs/shell/doctor pod resolution, choose newest `Running` pod by `startTime`; if none are running, choose the newest pod and warn.
 
 ## Development
+
+Use Go toolchain `1.26.1` or newer.
 
 ```bash
 make lint

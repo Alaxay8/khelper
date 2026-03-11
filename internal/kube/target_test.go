@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 func TestResolveWorkloadPrefersNameMatch(t *testing.T) {
@@ -113,6 +114,39 @@ func TestResolveWorkloadAllNamespacesAmbiguousRequiresPick(t *testing.T) {
 	}
 	if ref.Namespace != "shop" {
 		t.Fatalf("expected pick=2 to return namespace shop, got %s", ref.Namespace)
+	}
+}
+
+func TestResolveWorkloadAllNamespacesUsesNameFieldSelector(t *testing.T) {
+	t.Parallel()
+
+	client := fake.NewSimpleClientset(
+		newDeployment("alpha", "frontend", map[string]string{"app": "frontend-alpha"}),
+		newDeployment("shop", "frontend", map[string]string{"app": "frontend-shop"}),
+		newDeployment("shop", "checkout", map[string]string{"app": "checkout"}),
+	)
+
+	resolver := NewResolver(client)
+	_, err := resolver.ResolveWorkload(context.Background(), NamespaceAll, "frontend", KindDeployment, 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	listActions := 0
+	for _, action := range client.Actions() {
+		listAction, ok := action.(k8stesting.ListAction)
+		if !ok || action.GetResource().Resource != "deployments" {
+			continue
+		}
+
+		listActions++
+		if got := listAction.GetListRestrictions().Fields.String(); got != "metadata.name=frontend" {
+			t.Fatalf("expected deployment list field selector metadata.name=frontend, got %q", got)
+		}
+	}
+
+	if listActions == 0 {
+		t.Fatal("expected at least one deployments list action")
 	}
 }
 

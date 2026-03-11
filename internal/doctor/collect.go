@@ -151,9 +151,15 @@ func listRelatedEvents(ctx context.Context, bundle *kube.ClientBundle, snapshot 
 		namespace = bundle.Namespace
 	}
 
-	list, err := bundle.Clientset.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{})
+	relatedReplicaSets, err := relatedReplicaSetNames(ctx, bundle, snapshot.Workload)
 	if err != nil {
-		return nil, fmt.Errorf("list events: %w", err)
+		return nil, err
+	}
+
+	refs := relatedEventObjectRefs(snapshot, relatedReplicaSets)
+	list, err := kube.ListEventsByObjects(ctx, bundle.Clientset, namespace, refs)
+	if err != nil {
+		return nil, fmt.Errorf("list related events: %w", err)
 	}
 
 	now := options.Now
@@ -166,8 +172,8 @@ func listRelatedEvents(ctx context.Context, bundle *kube.ClientBundle, snapshot 
 	}
 
 	related := make([]corev1.Event, 0)
-	for _, event := range list.Items {
-		if !isRelatedEvent(event, snapshot) {
+	for _, event := range list {
+		if !isRelatedEvent(event, snapshot, relatedReplicaSets) {
 			continue
 		}
 		ts := eventTimestamp(event)
@@ -195,8 +201,84 @@ func listRelatedEvents(ctx context.Context, bundle *kube.ClientBundle, snapshot 
 	return related, nil
 }
 
-func isRelatedEvent(event corev1.Event, snapshot *Snapshot) bool {
-	kind := strings.ToLower(event.InvolvedObject.Kind)
+func relatedEventObjectRefs(snapshot *Snapshot, relatedReplicaSets map[string]struct{}) []kube.EventObjectRef {
+	if snapshot == nil {
+		return nil
+	}
+
+	refs := make([]kube.EventObjectRef, 0, len(snapshot.Pods)+len(relatedReplicaSets)+1)
+	if strings.TrimSpace(snapshot.Workload.Kind) != "" && strings.TrimSpace(snapshot.Workload.Name) != "" {
+		refs = append(refs, kube.EventObjectRef{
+			Kind: snapshot.Workload.Kind,
+			Name: snapshot.Workload.Name,
+		})
+	}
+
+	podNames := make([]string, 0, len(snapshot.Pods))
+	for i := range snapshot.Pods {
+		name := strings.TrimSpace(snapshot.Pods[i].Name)
+		if name == "" {
+			continue
+		}
+		podNames = append(podNames, name)
+	}
+	sort.Strings(podNames)
+	for i := range podNames {
+		refs = append(refs, kube.EventObjectRef{
+			Kind: kube.KindPod,
+			Name: podNames[i],
+		})
+	}
+
+	replicaSetNames := make([]string, 0, len(relatedReplicaSets))
+	for name := range relatedReplicaSets {
+		replicaSetNames = append(replicaSetNames, name)
+	}
+	sort.Strings(replicaSetNames)
+	for i := range replicaSetNames {
+		refs = append(refs, kube.EventObjectRef{
+			Kind: "replicaset",
+			Name: replicaSetNames[i],
+		})
+	}
+
+	return refs
+}
+
+func relatedReplicaSetNames(ctx context.Context, bundle *kube.ClientBundle, workload kube.WorkloadRef) (map[string]struct{}, error) {
+	names := make(map[string]struct{})
+	if workload.Kind != kube.KindDeployment || workload.Selector == "" {
+		return names, nil
+	}
+
+	replicaSets, err := bundle.Clientset.AppsV1().ReplicaSets(workload.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: workload.Selector,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list related replica sets: %w", err)
+	}
+
+	for i := range replicaSets.Items {
+		rs := replicaSets.Items[i]
+		if replicaSetOwnedByDeployment(rs, workload.Name) {
+			names[rs.Name] = struct{}{}
+		}
+	}
+
+	return names, nil
+}
+
+func replicaSetOwnedByDeployment(rs appsv1.ReplicaSet, deploymentName string) bool {
+	for _, owner := range rs.OwnerReferences {
+		if strings.EqualFold(owner.Kind, "Deployment") && owner.Name == deploymentName {
+			return true
+		}
+	}
+	return strings.HasPrefix(rs.Name, deploymentName+"-")
+}
+
+func isRelatedEvent(event corev1.Event, snapshot *Snapshot, relatedReplicaSets map[string]struct{}) bool {
+	kind := normalizeRelatedEventKind(event.InvolvedObject.Kind)
 	name := event.InvolvedObject.Name
 
 	if eventMatchesWorkload(kind, name, snapshot.Workload) {
@@ -215,10 +297,17 @@ func isRelatedEvent(event corev1.Event, snapshot *Snapshot) bool {
 		}
 	}
 
+	if kind == "replicaset" {
+		if _, ok := relatedReplicaSets[name]; ok {
+			return true
+		}
+	}
+
 	return false
 }
 
 func eventMatchesWorkload(kind, name string, workload kube.WorkloadRef) bool {
+	kind = normalizeRelatedEventKind(kind)
 	if name != workload.Name {
 		return false
 	}
@@ -240,6 +329,21 @@ func eventMatchesWorkload(kind, name string, workload kube.WorkloadRef) bool {
 		return kind == "pod"
 	default:
 		return false
+	}
+}
+
+func normalizeRelatedEventKind(kind string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "deployment", "deployments", "deployment.apps":
+		return "deployment"
+	case "statefulset", "statefulsets", "statefulset.apps":
+		return "statefulset"
+	case "pod", "pods":
+		return "pod"
+	case "replicaset", "replicasets", "replicaset.apps":
+		return "replicaset"
+	default:
+		return strings.ToLower(strings.TrimSpace(kind))
 	}
 }
 

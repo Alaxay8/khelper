@@ -92,6 +92,9 @@ func TestNewClientBundle(t *testing.T) {
 	if bundle.Namespace != "shop" {
 		t.Fatalf("expected namespace shop, got %q", bundle.Namespace)
 	}
+	if bundle.RESTConfig.Timeout != 0 {
+		t.Fatalf("expected REST timeout to remain unset, got %s", bundle.RESTConfig.Timeout)
+	}
 }
 
 func TestNewClientBundleWithContextOverride(t *testing.T) {

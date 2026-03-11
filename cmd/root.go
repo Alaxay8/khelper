@@ -155,9 +155,18 @@ func loadRuntimeConfig() error {
 }
 
 func exitCode(err error) int {
-	var ee *ExitError
-	if errors.As(err, &ee) {
-		return ee.Code
+	for {
+		var ee *ExitError
+		if !errors.As(err, &ee) {
+			break
+		}
+		if ee.Code != ExitCodeGeneral {
+			return ee.Code
+		}
+		if ee.Err == nil {
+			return ee.Code
+		}
+		err = ee.Err
 	}
 
 	var amb *kube.AmbiguousMatchError
