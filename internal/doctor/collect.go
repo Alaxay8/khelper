@@ -157,7 +157,8 @@ func listRelatedEvents(ctx context.Context, bundle *kube.ClientBundle, snapshot 
 	}
 
 	refs := relatedEventObjectRefs(snapshot, relatedReplicaSets)
-	list, err := kube.ListEventsByObjectsWithPodNamePrefixes(ctx, bundle.Clientset, namespace, refs, podNamePrefixes(snapshot, relatedReplicaSets))
+	prefixes := podNamePrefixes(snapshot, relatedReplicaSets)
+	list, err := kube.ListEventsByObjectsWithPodNamePrefixes(ctx, bundle.Clientset, namespace, refs, prefixes)
 	if err != nil {
 		return nil, fmt.Errorf("list related events: %w", err)
 	}
@@ -173,7 +174,7 @@ func listRelatedEvents(ctx context.Context, bundle *kube.ClientBundle, snapshot 
 
 	related := make([]corev1.Event, 0)
 	for _, event := range list {
-		if !isRelatedEvent(event, snapshot, relatedReplicaSets) {
+		if !isRelatedEvent(event, snapshot, relatedReplicaSets, prefixes) {
 			continue
 		}
 		ts := eventTimestamp(event)
@@ -302,7 +303,7 @@ func replicaSetOwnedByDeployment(rs appsv1.ReplicaSet, deploymentName string) bo
 	return strings.HasPrefix(rs.Name, deploymentName+"-")
 }
 
-func isRelatedEvent(event corev1.Event, snapshot *Snapshot, relatedReplicaSets map[string]struct{}) bool {
+func isRelatedEvent(event corev1.Event, snapshot *Snapshot, relatedReplicaSets map[string]struct{}, podPrefixes []string) bool {
 	kind := normalizeRelatedEventKind(event.InvolvedObject.Kind)
 	name := event.InvolvedObject.Name
 
@@ -319,6 +320,13 @@ func isRelatedEvent(event corev1.Event, snapshot *Snapshot, relatedReplicaSets m
 		}
 		if event.InvolvedObject.UID != "" && event.InvolvedObject.UID == pod.UID {
 			return true
+		}
+	}
+	if kind == "pod" {
+		for i := range podPrefixes {
+			if strings.HasPrefix(name, podPrefixes[i]) {
+				return true
+			}
 		}
 	}
 
