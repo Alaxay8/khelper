@@ -1,9 +1,12 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/alaxay8/khelper/internal/config"
 	"github.com/alaxay8/khelper/internal/kube"
@@ -72,7 +75,10 @@ var (
 )
 
 func Execute() {
-	if err := rootCmd.Execute(); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		code := exitCode(err)
 		if code != ExitCodeDoctorFindings {
 			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
@@ -104,12 +110,14 @@ func init() {
 	flags.StringP("namespace", "n", "", "Namespace override")
 	flags.Bool("verbose", false, "Enable debug logging")
 	flags.StringP("output", "o", "table", "Output format: table|json")
+	flags.Duration("request-timeout", config.DefaultRequestTimeout, "Per-request timeout for Kubernetes API calls (0 disables)")
 
 	_ = cfgViper.BindPFlag("kubeconfig", flags.Lookup("kubeconfig"))
 	_ = cfgViper.BindPFlag("context", flags.Lookup("context"))
 	_ = cfgViper.BindPFlag("namespace", flags.Lookup("namespace"))
 	_ = cfgViper.BindPFlag("verbose", flags.Lookup("verbose"))
 	_ = cfgViper.BindPFlag("output", flags.Lookup("output"))
+	_ = cfgViper.BindPFlag("request_timeout", flags.Lookup("request-timeout"))
 
 	rootCmd.AddCommand(
 		newVersionCmd(),
@@ -148,7 +156,14 @@ func loadRuntimeConfig() error {
 		if used := cfgViper.ConfigFileUsed(); used != "" {
 			debugf("using config file: %s", used)
 		}
-		debugf("kubeconfig=%s context=%s namespace=%s output=%s", cfg.Kubeconfig, cfg.Context, cfg.Namespace, cfg.Output)
+		debugf(
+			"kubeconfig=%s context=%s namespace=%s output=%s request-timeout=%s",
+			cfg.Kubeconfig,
+			cfg.Context,
+			cfg.Namespace,
+			cfg.Output,
+			cfg.RequestTimeout,
+		)
 	}
 
 	return nil

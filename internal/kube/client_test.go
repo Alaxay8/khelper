@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/alaxay8/khelper/internal/config"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -74,7 +75,8 @@ func TestNewClientBundle(t *testing.T) {
 	}
 
 	bundle, err := NewClientBundle(config.Settings{
-		Kubeconfig: path,
+		Kubeconfig:     path,
+		RequestTimeout: 45 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("NewClientBundle returned error: %v", err)
@@ -92,8 +94,8 @@ func TestNewClientBundle(t *testing.T) {
 	if bundle.Namespace != "shop" {
 		t.Fatalf("expected namespace shop, got %q", bundle.Namespace)
 	}
-	if bundle.RESTConfig.Timeout != 0 {
-		t.Fatalf("expected REST timeout to remain unset, got %s", bundle.RESTConfig.Timeout)
+	if bundle.RESTConfig.Timeout != 45*time.Second {
+		t.Fatalf("expected REST timeout 45s, got %s", bundle.RESTConfig.Timeout)
 	}
 }
 
@@ -118,6 +120,26 @@ func TestNewClientBundleWithContextOverride(t *testing.T) {
 	}
 	if bundle.Namespace != "ops" {
 		t.Fatalf("expected namespace from prod context ops, got %q", bundle.Namespace)
+	}
+	if bundle.RESTConfig.Timeout != 0 {
+		t.Fatalf("expected REST timeout unset by default, got %s", bundle.RESTConfig.Timeout)
+	}
+}
+
+func TestNewClientBundleRejectsNegativeTimeout(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config")
+	if err := WriteRawKubeconfigAtomic(path, testRawKubeconfig()); err != nil {
+		t.Fatalf("failed to write kubeconfig: %v", err)
+	}
+
+	_, err := NewClientBundle(config.Settings{
+		Kubeconfig:     path,
+		RequestTimeout: -1 * time.Second,
+	})
+	if err == nil {
+		t.Fatal("expected error for negative request timeout")
 	}
 }
 

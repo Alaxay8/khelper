@@ -7,7 +7,9 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 func TestListEventsByObjectsReturnsOnlyRequested(t *testing.T) {
@@ -48,7 +50,7 @@ func TestListEventsByObjectsReturnsOnlyRequested(t *testing.T) {
 	}
 }
 
-func TestListEventsByObjectsFiltersByNamesWhenBatching(t *testing.T) {
+func TestListEventsByObjectsUsesObjectScopedQueriesForLargeInput(t *testing.T) {
 	t.Parallel()
 
 	client := fake.NewSimpleClientset(
@@ -57,8 +59,18 @@ func TestListEventsByObjectsFiltersByNamesWhenBatching(t *testing.T) {
 		testEvent("pod-event-foreign", "shop", "Pod", "checkout-00"),
 	)
 
-	refs := make([]EventObjectRef, 0, eventObjectBatchThreshold+1)
-	for i := 0; i < eventObjectBatchThreshold+1; i++ {
+	var fieldSelectors []string
+	client.PrependReactor("list", "events", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+		listAction, ok := action.(k8stesting.ListAction)
+		if !ok {
+			t.Fatalf("expected ListAction, got %T", action)
+		}
+		fieldSelectors = append(fieldSelectors, listAction.GetListRestrictions().Fields.String())
+		return false, nil, nil
+	})
+
+	refs := make([]EventObjectRef, 0, 25)
+	for i := 0; i < 25; i++ {
 		refs = append(refs, EventObjectRef{
 			Kind: KindPod,
 			Name: fmt.Sprintf("payment-%02d", i),
@@ -86,6 +98,16 @@ func TestListEventsByObjectsFiltersByNamesWhenBatching(t *testing.T) {
 	}
 	if _, ok := got["pod-event-foreign"]; ok {
 		t.Fatalf("did not expect foreign pod event in results: %+v", got)
+	}
+
+	if len(fieldSelectors) != len(refs) {
+		t.Fatalf("expected %d object-scoped list calls, got %d (%v)", len(refs), len(fieldSelectors), fieldSelectors)
+	}
+	for i := range fieldSelectors {
+		selector := fieldSelectors[i]
+		if selector == "involvedObject.kind=Pod" {
+			t.Fatalf("unexpected kind-wide selector %q; expected object-scoped selector", selector)
+		}
 	}
 }
 

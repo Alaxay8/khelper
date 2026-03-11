@@ -12,8 +12,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-const eventObjectBatchThreshold = 20
-
 // EventObjectRef identifies an object we want events for.
 type EventObjectRef struct {
 	Kind string
@@ -35,23 +33,13 @@ func ListEventsByObjects(ctx context.Context, client kubernetes.Interface, names
 			continue
 		}
 
-		if len(names) <= eventObjectBatchThreshold {
-			for _, name := range names {
-				items, err := listEventsByObject(ctx, client, namespace, kind, name)
-				if err != nil {
-					return nil, err
-				}
-				appendUniqueEvents(dedup, items)
+		for _, name := range names {
+			items, err := listEventsByObject(ctx, client, namespace, kind, name)
+			if err != nil {
+				return nil, err
 			}
-			continue
+			appendUniqueEvents(dedup, items)
 		}
-
-		items, err := listEventsByKind(ctx, client, namespace, kind)
-		if err != nil {
-			return nil, err
-		}
-		filtered := filterEventsByNames(items, kind, namesSet)
-		appendUniqueEvents(dedup, filtered)
 	}
 
 	return sortedEventValues(dedup), nil
@@ -86,18 +74,6 @@ func listEventsByObject(ctx context.Context, client kubernetes.Interface, namesp
 	return filterEventsByObject(list.Items, kind, name), nil
 }
 
-func listEventsByKind(ctx context.Context, client kubernetes.Interface, namespace, kind string) ([]corev1.Event, error) {
-	kubeKind := involvedObjectFieldKind(kind)
-	selector := fields.Set{
-		"involvedObject.kind": kubeKind,
-	}.String()
-	list, err := client.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{FieldSelector: selector})
-	if err != nil {
-		return nil, fmt.Errorf("list events for kind %s: %w", kind, err)
-	}
-	return filterEventsByKind(list.Items, kind), nil
-}
-
 func filterEventsByObject(events []corev1.Event, kind, name string) []corev1.Event {
 	filtered := make([]corev1.Event, 0, len(events))
 	for i := range events {
@@ -106,33 +82,6 @@ func filterEventsByObject(events []corev1.Event, kind, name string) []corev1.Eve
 			continue
 		}
 		if strings.TrimSpace(event.InvolvedObject.Name) != name {
-			continue
-		}
-		filtered = append(filtered, event)
-	}
-	return filtered
-}
-
-func filterEventsByKind(events []corev1.Event, kind string) []corev1.Event {
-	filtered := make([]corev1.Event, 0, len(events))
-	for i := range events {
-		event := events[i]
-		if normalizeEventObjectKind(event.InvolvedObject.Kind) != kind {
-			continue
-		}
-		filtered = append(filtered, event)
-	}
-	return filtered
-}
-
-func filterEventsByNames(events []corev1.Event, kind string, names map[string]struct{}) []corev1.Event {
-	filtered := make([]corev1.Event, 0, len(events))
-	for i := range events {
-		event := events[i]
-		if normalizeEventObjectKind(event.InvolvedObject.Kind) != kind {
-			continue
-		}
-		if _, ok := names[strings.TrimSpace(event.InvolvedObject.Name)]; !ok {
 			continue
 		}
 		filtered = append(filtered, event)

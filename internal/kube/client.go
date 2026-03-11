@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/alaxay8/khelper/internal/config"
 	"k8s.io/client-go/kubernetes"
@@ -24,6 +25,10 @@ type ClientBundle struct {
 }
 
 func NewClientBundle(settings config.Settings) (*ClientBundle, error) {
+	if settings.RequestTimeout < 0 {
+		return nil, fmt.Errorf("request timeout must be >= 0")
+	}
+
 	loadingRules := &clientcmd.ClientConfigLoadingRules{ExplicitPath: settings.Kubeconfig}
 	overrides := &clientcmd.ConfigOverrides{}
 	if settings.Context != "" {
@@ -36,6 +41,7 @@ func NewClientBundle(settings config.Settings) (*ClientBundle, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build kubernetes REST config: %w", err)
 	}
+	restCfg.Timeout = normalizeRequestTimeout(settings.RequestTimeout)
 
 	clientset, err := kubernetes.NewForConfig(restCfg)
 	if err != nil {
@@ -66,6 +72,13 @@ func NewClientBundle(settings config.Settings) (*ClientBundle, error) {
 		Namespace:      namespace,
 		CurrentContext: ctxName,
 	}, nil
+}
+
+func normalizeRequestTimeout(timeout time.Duration) time.Duration {
+	if timeout <= 0 {
+		return 0
+	}
+	return timeout
 }
 
 func NewMetricsClient(restCfg *rest.Config) (metricsclient.Interface, error) {

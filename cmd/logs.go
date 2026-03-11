@@ -50,7 +50,16 @@ func newLogsCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "WARNING: %s\n", resolved.Warning)
 			}
 
-			if err := kube.StreamPodLogs(cmd.Context(), bundle.Clientset, resolved.Pod, kube.PodLogsOptions{
+			logClient := bundle.Clientset
+			if follow && Config().RequestTimeout > 0 {
+				streamBundle, err := newClientBundleWithRequestTimeout(0)
+				if err != nil {
+					return err
+				}
+				logClient = streamBundle.Clientset
+			}
+
+			if err := kube.StreamPodLogs(cmd.Context(), logClient, resolved.Pod, kube.PodLogsOptions{
 				Follow:        follow,
 				Since:         since,
 				Tail:          tail,

@@ -37,6 +37,14 @@ func newShellCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "WARNING: %s\n", resolved.Warning)
 			}
 
+			execBundle := bundle
+			if Config().RequestTimeout > 0 {
+				execBundle, err = newClientBundleWithRequestTimeout(0)
+				if err != nil {
+					return err
+				}
+			}
+
 			chosenContainer, err := pickContainerForExec(resolved.Pod, container)
 			if err != nil {
 				return NewExitError(ExitCodeUsage, err.Error())
@@ -48,7 +56,7 @@ func newShellCmd() *cobra.Command {
 					return NewExitError(ExitCodeUsage, "--command must be either bash or sh")
 				}
 			} else {
-				selectedShell, err = kube.DetectShell(cmd.Context(), bundle.RESTConfig, bundle.Clientset, resolved.Pod.Namespace, resolved.Pod.Name, chosenContainer)
+				selectedShell, err = kube.DetectShell(cmd.Context(), execBundle.RESTConfig, execBundle.Clientset, resolved.Pod.Namespace, resolved.Pod.Name, chosenContainer)
 				if err != nil {
 					return WrapExitError(ExitCodeGeneral, err, "detect default shell")
 				}
@@ -56,8 +64,8 @@ func newShellCmd() *cobra.Command {
 
 			if err := kube.ExecInPod(
 				cmd.Context(),
-				bundle.RESTConfig,
-				bundle.Clientset,
+				execBundle.RESTConfig,
+				execBundle.Clientset,
 				resolved.Pod.Namespace,
 				resolved.Pod.Name,
 				chosenContainer,

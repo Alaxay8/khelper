@@ -26,6 +26,17 @@ func newClientBundle() (*kube.ClientBundle, error) {
 	return bundle, nil
 }
 
+func newClientBundleWithRequestTimeout(timeout time.Duration) (*kube.ClientBundle, error) {
+	settings := Config()
+	settings.RequestTimeout = timeout
+
+	bundle, err := kube.NewClientBundle(settings)
+	if err != nil {
+		return nil, WrapExitError(ExitCodeGeneral, err, defaultKubernetesClientError)
+	}
+	return bundle, nil
+}
+
 func resolveNamespaceScope(namespace string, allNamespaces bool) string {
 	if allNamespaces {
 		return kube.NamespaceAll

@@ -159,6 +159,7 @@ kubeconfig: /Users/you/.kube/config
 context: dev-cluster
 namespace: shop
 output: table
+request_timeout: 30s
 ```
 
 Environment variables are also supported:
@@ -168,6 +169,7 @@ Environment variables are also supported:
 - `KHELPER_NAMESPACE`
 - `KHELPER_OUTPUT`
 - `KHELPER_VERBOSE`
+- `KHELPER_REQUEST_TIMEOUT`
 
 ## Global Flags
 
@@ -176,6 +178,7 @@ Environment variables are also supported:
 - `--namespace, -n string`
 - `--verbose`
 - `--output, -o table|json`
+- `--request-timeout duration` (default: `30s`, set `0` to disable)
 
 ## Commands
 
