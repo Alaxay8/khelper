@@ -2,15 +2,20 @@ package kube
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"testing"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 func TestGetRolloutStatusDeploymentComplete(t *testing.T) {
@@ -404,6 +409,102 @@ func TestSetWorkloadImagesErrorsWhenContainerMissing(t *testing.T) {
 		"api": "nginx:1.27",
 	}); err == nil {
 		t.Fatal("expected error when requested container does not exist")
+	}
+}
+
+func TestSetWorkloadImagesRetriesOnConflict(t *testing.T) {
+	t.Parallel()
+
+	replicas := int32(1)
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "payment", Namespace: "shop"},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "nginx:1.25"}}},
+			},
+		},
+	}
+
+	client := fake.NewSimpleClientset(dep)
+	updateAttempts := 0
+	client.PrependReactor("update", "deployments", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		updateAttempts++
+		if updateAttempts == 1 {
+			return true, nil, apierrors.NewConflict(
+				schema.GroupResource{Group: "apps", Resource: "deployments"},
+				"payment",
+				errors.New("simulated conflict"),
+			)
+		}
+		return false, nil, nil
+	})
+
+	result, err := SetWorkloadImages(context.Background(), client, "shop", KindDeployment, "payment", map[string]string{
+		"app": "nginx:1.27",
+	})
+	if err != nil {
+		t.Fatalf("SetWorkloadImages returned error: %v", err)
+	}
+
+	if result.Updated["app"] != "nginx:1.27" {
+		t.Fatalf("expected updated image map to contain app=nginx:1.27, got %+v", result.Updated)
+	}
+	if updateAttempts < 2 {
+		t.Fatalf("expected conflict retry to trigger at least 2 update attempts, got %d", updateAttempts)
+	}
+}
+
+func TestUndoRolloutDeploymentRetriesOnConflict(t *testing.T) {
+	t.Parallel()
+
+	replicas := int32(1)
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "payment",
+			Namespace: "shop",
+			UID:       "dep-uid",
+			Annotations: map[string]string{
+				"deployment.kubernetes.io/revision": "3",
+			},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "payment"}},
+				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "nginx:1.27"}}},
+			},
+		},
+	}
+
+	rs1 := newReplicaSet("shop", "payment-5a6b", "dep-uid", 1, "nginx:1.25")
+	rs2 := newReplicaSet("shop", "payment-66cd", "dep-uid", 2, "nginx:1.26")
+	rs3 := newReplicaSet("shop", "payment-7f9f", "dep-uid", 3, "nginx:1.27")
+
+	client := fake.NewSimpleClientset(dep, rs1, rs2, rs3)
+	updateAttempts := 0
+	client.PrependReactor("update", "deployments", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		updateAttempts++
+		if updateAttempts == 1 {
+			return true, nil, apierrors.NewConflict(
+				schema.GroupResource{Group: "apps", Resource: "deployments"},
+				"payment",
+				errors.New("simulated conflict"),
+			)
+		}
+		return false, nil, nil
+	})
+
+	result, err := UndoRollout(context.Background(), client, "shop", KindDeployment, "payment", 0, 0, nil)
+	if err != nil {
+		t.Fatalf("UndoRollout returned error: %v", err)
+	}
+
+	if result.ToRevision != 2 {
+		t.Fatalf("expected rollback to revision 2, got %d", result.ToRevision)
+	}
+	if updateAttempts < 2 {
+		t.Fatalf("expected conflict retry to trigger at least 2 update attempts, got %d", updateAttempts)
 	}
 }
 

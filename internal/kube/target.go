@@ -251,9 +251,11 @@ func (r *Resolver) resolveDeployment(ctx context.Context, namespace, target stri
 }
 
 func (r *Resolver) resolveDeploymentAllNamespaces(ctx context.Context, target string, pick int) (WorkloadRef, error) {
-	deployments, err := r.client.AppsV1().Deployments(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+	deployments, err := r.client.AppsV1().Deployments(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
+		FieldSelector: nameFieldSelector(target),
+	})
 	if err != nil {
-		return WorkloadRef{}, fmt.Errorf("list deployments across all namespaces: %w", err)
+		return WorkloadRef{}, fmt.Errorf("list deployments across all namespaces by name %q: %w", target, err)
 	}
 
 	nameMatches := make([]WorkloadRef, 0)
@@ -328,9 +330,11 @@ func (r *Resolver) resolveStatefulSet(ctx context.Context, namespace, target str
 }
 
 func (r *Resolver) resolveStatefulSetAllNamespaces(ctx context.Context, target string, pick int) (WorkloadRef, error) {
-	statefulSets, err := r.client.AppsV1().StatefulSets(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+	statefulSets, err := r.client.AppsV1().StatefulSets(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
+		FieldSelector: nameFieldSelector(target),
+	})
 	if err != nil {
-		return WorkloadRef{}, fmt.Errorf("list statefulsets across all namespaces: %w", err)
+		return WorkloadRef{}, fmt.Errorf("list statefulsets across all namespaces by name %q: %w", target, err)
 	}
 
 	nameMatches := make([]WorkloadRef, 0)
@@ -401,9 +405,11 @@ func (r *Resolver) resolvePodByTarget(ctx context.Context, namespace, target str
 }
 
 func (r *Resolver) resolvePodByTargetAllNamespaces(ctx context.Context, target string, pick int) (WorkloadRef, error) {
-	pods, err := r.client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+	pods, err := r.client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
+		FieldSelector: nameFieldSelector(target),
+	})
 	if err != nil {
-		return WorkloadRef{}, fmt.Errorf("list pods across all namespaces: %w", err)
+		return WorkloadRef{}, fmt.Errorf("list pods across all namespaces by name %q: %w", target, err)
 	}
 
 	nameMatches := make([]WorkloadRef, 0)
@@ -553,4 +559,8 @@ func podTimestamp(p corev1.Pod) time.Time {
 		return p.Status.StartTime.Time
 	}
 	return p.CreationTimestamp.Time
+}
+
+func nameFieldSelector(name string) string {
+	return "metadata.name=" + strings.TrimSpace(name)
 }

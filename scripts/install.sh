@@ -6,6 +6,8 @@ MODE="auto"
 INSTALL_DIR=""
 REPO="alaxay8/khelper"
 VERSION="latest"
+CHECKSUM=""
+INSECURE_NO_CHECKSUM="false"
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"
 REPO_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd -P)"
@@ -27,13 +29,15 @@ Options:
   --mode <auto|local|build|release>
   --repo <owner/repo>      GitHub repo for release downloads (default: alaxay8/khelper)
   --version <tag|latest>   Release tag or latest (default: latest)
+  --checksum <sha256>      Expected SHA-256 for --mode release asset
+  --insecure-no-checksum   Allow --mode release without checksum verification
   --help                   Show this help
 
 Examples:
   $0
   $0 --mode local
   $0 --mode build
-  $0 --mode release --version v0.1.0
+  $0 --mode release --version v0.1.0 --checksum <sha256>
 USAGE
 }
 
@@ -44,6 +48,42 @@ die() {
 
 has_cmd() {
   command -v "$1" >/dev/null 2>&1
+}
+
+normalize_checksum() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]'
+}
+
+sha256_file() {
+  file="$1"
+  if has_cmd sha256sum; then
+    sha256sum "$file" | awk '{print $1}'
+    return 0
+  fi
+  if has_cmd shasum; then
+    shasum -a 256 "$file" | awk '{print $1}'
+    return 0
+  fi
+  if has_cmd openssl; then
+    openssl dgst -sha256 "$file" | awk '{print $NF}'
+    return 0
+  fi
+  return 1
+}
+
+verify_sha256() {
+  file="$1"
+  expected_raw="$2"
+  expected="$(normalize_checksum "$expected_raw")"
+  [ -n "$expected" ] || die "checksum is empty"
+
+  actual="$(sha256_file "$file" 2>/dev/null || true)"
+  [ -n "$actual" ] || die "could not compute SHA-256 checksum (need sha256sum, shasum, or openssl)"
+  actual="$(normalize_checksum "$actual")"
+
+  if [ "$actual" != "$expected" ]; then
+    die "checksum mismatch for $(basename "$file"): expected ${expected}, got ${actual}"
+  fi
 }
 
 run_privileged() {
@@ -217,6 +257,14 @@ while [ "$#" -gt 0 ]; do
       VERSION="$2"
       shift 2
       ;;
+    --checksum)
+      CHECKSUM="$2"
+      shift 2
+      ;;
+    --insecure-no-checksum)
+      INSECURE_NO_CHECKSUM="true"
+      shift
+      ;;
     --help|-h|help)
       usage
       exit 0
@@ -231,6 +279,10 @@ case "$MODE" in
   auto|local|build|release) ;;
   *) die "invalid mode '$MODE' (expected: auto|local|build|release)" ;;
 esac
+
+if [ "$MODE" = "release" ] && [ "$INSECURE_NO_CHECKSUM" != "true" ] && [ -z "$(normalize_checksum "$CHECKSUM")" ]; then
+  die "--mode release requires --checksum (or pass --insecure-no-checksum to bypass verification)"
+fi
 
 OS_RAW="$(uname -s)"
 ARCH_RAW="$(uname -m)"
@@ -332,6 +384,11 @@ if [ -z "$SRC" ] && [ "$MODE" = "release" ]; then
   echo "Downloading ${URL}"
   curl -fsSL "$URL" -o "$SRC" || die "failed to download '${ASSET_NAME}' from ${URL}"
   chmod +x "$SRC"
+  if [ "$INSECURE_NO_CHECKSUM" = "true" ]; then
+    echo "WARN: checksum verification is disabled for release download" >&2
+  else
+    verify_sha256 "$SRC" "$CHECKSUM"
+  fi
 fi
 
 [ -n "$SRC" ] || die "no install source found"

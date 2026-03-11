@@ -15,6 +15,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
 )
 
 const (
@@ -187,37 +188,55 @@ func SetWorkloadImages(ctx context.Context, client kubernetes.Interface, namespa
 
 	switch kind {
 	case KindDeployment:
-		dep, err := client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+		var applied map[string]string
+		err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			dep, err := client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+			if err != nil {
+				return fmt.Errorf("get deployment %s: %w", name, err)
+			}
+
+			applied, err = applyContainerImageUpdates(&dep.Spec.Template.Spec, updates)
+			if err != nil {
+				return err
+			}
+			if _, err := client.AppsV1().Deployments(namespace).Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
+				return fmt.Errorf("update deployment %s: %w", name, err)
+			}
+			return nil
+		})
 		if err != nil {
 			if apierrors.IsNotFound(err) {
 				return nil, &NotFoundError{Namespace: namespace, Target: name, Kind: KindDeployment}
 			}
-			return nil, fmt.Errorf("get deployment %s: %w", name, err)
-		}
-		applied, err := applyContainerImageUpdates(&dep.Spec.Template.Spec, updates)
-		if err != nil {
 			return nil, err
 		}
-		if _, err := client.AppsV1().Deployments(namespace).Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
-			return nil, fmt.Errorf("update deployment %s: %w", name, err)
-		}
-		return &SetImageResult{Kind: KindDeployment, Name: dep.Name, Namespace: dep.Namespace, Updated: applied}, nil
+
+		return &SetImageResult{Kind: KindDeployment, Name: name, Namespace: namespace, Updated: applied}, nil
 	case KindStatefulSet:
-		sts, err := client.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
+		var applied map[string]string
+		err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			sts, err := client.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
+			if err != nil {
+				return fmt.Errorf("get statefulset %s: %w", name, err)
+			}
+
+			applied, err = applyContainerImageUpdates(&sts.Spec.Template.Spec, updates)
+			if err != nil {
+				return err
+			}
+			if _, err := client.AppsV1().StatefulSets(namespace).Update(ctx, sts, metav1.UpdateOptions{}); err != nil {
+				return fmt.Errorf("update statefulset %s: %w", name, err)
+			}
+			return nil
+		})
 		if err != nil {
 			if apierrors.IsNotFound(err) {
 				return nil, &NotFoundError{Namespace: namespace, Target: name, Kind: KindStatefulSet}
 			}
-			return nil, fmt.Errorf("get statefulset %s: %w", name, err)
-		}
-		applied, err := applyContainerImageUpdates(&sts.Spec.Template.Spec, updates)
-		if err != nil {
 			return nil, err
 		}
-		if _, err := client.AppsV1().StatefulSets(namespace).Update(ctx, sts, metav1.UpdateOptions{}); err != nil {
-			return nil, fmt.Errorf("update statefulset %s: %w", name, err)
-		}
-		return &SetImageResult{Kind: KindStatefulSet, Name: sts.Name, Namespace: sts.Namespace, Updated: applied}, nil
+
+		return &SetImageResult{Kind: KindStatefulSet, Name: name, Namespace: namespace, Updated: applied}, nil
 	default:
 		return nil, fmt.Errorf("set-image supports only deployment/statefulset, got %q", kind)
 	}
@@ -267,7 +286,17 @@ func listDeploymentHistory(ctx context.Context, client kubernetes.Interface, nam
 		return nil, fmt.Errorf("get deployment %s: %w", name, err)
 	}
 
-	list, err := client.AppsV1().ReplicaSets(namespace).List(ctx, metav1.ListOptions{})
+	selector, err := SelectorFromLabelSelector(dep.Spec.Selector)
+	if err != nil {
+		return nil, fmt.Errorf("deployment %s selector: %w", name, err)
+	}
+
+	listOptions := metav1.ListOptions{}
+	if selector != "" {
+		listOptions.LabelSelector = selector
+	}
+
+	list, err := client.AppsV1().ReplicaSets(namespace).List(ctx, listOptions)
 	if err != nil {
 		return nil, fmt.Errorf("list replica sets for deployment %s: %w", name, err)
 	}
@@ -314,7 +343,7 @@ func listStatefulSetHistory(ctx context.Context, client kubernetes.Interface, na
 		return nil, fmt.Errorf("get statefulset %s: %w", name, err)
 	}
 
-	list, err := client.AppsV1().ControllerRevisions(namespace).List(ctx, metav1.ListOptions{})
+	list, err := listStatefulSetControllerRevisions(ctx, client, namespace, sts)
 	if err != nil {
 		return nil, fmt.Errorf("list controller revisions for statefulset %s: %w", name, err)
 	}
@@ -356,141 +385,194 @@ func listStatefulSetHistory(ctx context.Context, client kubernetes.Interface, na
 }
 
 func undoDeploymentRollout(ctx context.Context, client kubernetes.Interface, namespace, name string, toRevision int64, timeout time.Duration, out io.Writer) (*UndoRolloutResult, error) {
-	dep, err := client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+	var result UndoRolloutResult
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		dep, err := client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("get deployment %s: %w", name, err)
+		}
+
+		selector, err := SelectorFromLabelSelector(dep.Spec.Selector)
+		if err != nil {
+			return fmt.Errorf("deployment %s selector: %w", name, err)
+		}
+
+		listOptions := metav1.ListOptions{}
+		if selector != "" {
+			listOptions.LabelSelector = selector
+		}
+
+		list, err := client.AppsV1().ReplicaSets(namespace).List(ctx, listOptions)
+		if err != nil {
+			return fmt.Errorf("list replica sets for deployment %s: %w", name, err)
+		}
+
+		templatesByRevision := make(map[int64]corev1.PodTemplateSpec)
+		revisionOrder := make([]int64, 0)
+		for i := range list.Items {
+			rs := list.Items[i]
+			if !replicaSetOwnedByDeployment(rs, dep) {
+				continue
+			}
+			revision := parseDeploymentRevision(rs.Annotations)
+			if revision <= 0 {
+				continue
+			}
+			if _, exists := templatesByRevision[revision]; !exists {
+				revisionOrder = append(revisionOrder, revision)
+			}
+			templatesByRevision[revision] = *rs.Spec.Template.DeepCopy()
+		}
+
+		if len(templatesByRevision) == 0 {
+			return fmt.Errorf("no rollout revisions found for deployment/%s", name)
+		}
+
+		sort.SliceStable(revisionOrder, func(i, j int) bool { return revisionOrder[i] < revisionOrder[j] })
+		currentRevision := parseDeploymentRevision(dep.Annotations)
+		targetRevision, err := pickTargetRevision(revisionOrder, currentRevision, toRevision)
+		if err != nil {
+			return err
+		}
+
+		targetTemplate := templatesByRevision[targetRevision]
+		if targetTemplate.Labels != nil {
+			delete(targetTemplate.Labels, podTemplateHashLabel)
+		}
+
+		dep.Spec.Template = targetTemplate
+		if _, err := client.AppsV1().Deployments(namespace).Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("update deployment %s for rollback: %w", name, err)
+		}
+
+		result = UndoRolloutResult{
+			Kind:         KindDeployment,
+			Name:         dep.Name,
+			Namespace:    dep.Namespace,
+			FromRevision: currentRevision,
+			ToRevision:   targetRevision,
+		}
+		return nil
+	})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, &NotFoundError{Namespace: namespace, Target: name, Kind: KindDeployment}
 		}
-		return nil, fmt.Errorf("get deployment %s: %w", name, err)
-	}
-
-	list, err := client.AppsV1().ReplicaSets(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("list replica sets for deployment %s: %w", name, err)
-	}
-
-	templatesByRevision := make(map[int64]corev1.PodTemplateSpec)
-	revisionOrder := make([]int64, 0)
-	for i := range list.Items {
-		rs := list.Items[i]
-		if !replicaSetOwnedByDeployment(rs, dep) {
-			continue
-		}
-		revision := parseDeploymentRevision(rs.Annotations)
-		if revision <= 0 {
-			continue
-		}
-		if _, exists := templatesByRevision[revision]; !exists {
-			revisionOrder = append(revisionOrder, revision)
-		}
-		templatesByRevision[revision] = *rs.Spec.Template.DeepCopy()
-	}
-
-	if len(templatesByRevision) == 0 {
-		return nil, fmt.Errorf("no rollout revisions found for deployment/%s", name)
-	}
-
-	sort.SliceStable(revisionOrder, func(i, j int) bool { return revisionOrder[i] < revisionOrder[j] })
-	currentRevision := parseDeploymentRevision(dep.Annotations)
-	targetRevision, err := pickTargetRevision(revisionOrder, currentRevision, toRevision)
-	if err != nil {
 		return nil, err
-	}
-
-	targetTemplate := templatesByRevision[targetRevision]
-	if targetTemplate.Labels != nil {
-		delete(targetTemplate.Labels, podTemplateHashLabel)
-	}
-	dep.Spec.Template = targetTemplate
-	if _, err := client.AppsV1().Deployments(namespace).Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
-		return nil, fmt.Errorf("update deployment %s for rollback: %w", name, err)
 	}
 
 	if timeout > 0 {
 		if out != nil {
-			_, _ = fmt.Fprintf(out, "Waiting for deployment rollout to revision %d...\n", targetRevision)
+			_, _ = fmt.Fprintf(out, "Waiting for deployment rollout to revision %d...\n", result.ToRevision)
 		}
 		if err := waitDeploymentRollout(ctx, client, namespace, name, timeout, out); err != nil {
 			return nil, err
 		}
 	}
 
-	return &UndoRolloutResult{
-		Kind:         KindDeployment,
-		Name:         dep.Name,
-		Namespace:    dep.Namespace,
-		FromRevision: currentRevision,
-		ToRevision:   targetRevision,
-	}, nil
+	return &result, nil
 }
 
 func undoStatefulSetRollout(ctx context.Context, client kubernetes.Interface, namespace, name string, toRevision int64, timeout time.Duration, out io.Writer) (*UndoRolloutResult, error) {
-	sts, err := client.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
+	var result UndoRolloutResult
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		sts, err := client.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("get statefulset %s: %w", name, err)
+		}
+
+		list, err := listStatefulSetControllerRevisions(ctx, client, namespace, sts)
+		if err != nil {
+			return fmt.Errorf("list controller revisions for statefulset %s: %w", name, err)
+		}
+
+		templatesByRevision := make(map[int64]corev1.PodTemplateSpec)
+		revisionOrder := make([]int64, 0)
+		currentRevision := int64(0)
+
+		for i := range list.Items {
+			rev := list.Items[i]
+			if !controllerRevisionOwnedByStatefulSet(rev, sts) {
+				continue
+			}
+			template, err := podTemplateFromControllerRevision(rev)
+			if err != nil {
+				return err
+			}
+			if _, exists := templatesByRevision[rev.Revision]; !exists {
+				revisionOrder = append(revisionOrder, rev.Revision)
+			}
+			templatesByRevision[rev.Revision] = *template
+			if rev.Name == sts.Status.CurrentRevision {
+				currentRevision = rev.Revision
+			}
+		}
+
+		if len(templatesByRevision) == 0 {
+			return fmt.Errorf("no rollout revisions found for statefulset/%s", name)
+		}
+
+		sort.SliceStable(revisionOrder, func(i, j int) bool { return revisionOrder[i] < revisionOrder[j] })
+		targetRevision, err := pickTargetRevision(revisionOrder, currentRevision, toRevision)
+		if err != nil {
+			return err
+		}
+
+		sts.Spec.Template = templatesByRevision[targetRevision]
+		if _, err := client.AppsV1().StatefulSets(namespace).Update(ctx, sts, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("update statefulset %s for rollback: %w", name, err)
+		}
+
+		result = UndoRolloutResult{
+			Kind:         KindStatefulSet,
+			Name:         sts.Name,
+			Namespace:    sts.Namespace,
+			FromRevision: currentRevision,
+			ToRevision:   targetRevision,
+		}
+		return nil
+	})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, &NotFoundError{Namespace: namespace, Target: name, Kind: KindStatefulSet}
 		}
-		return nil, fmt.Errorf("get statefulset %s: %w", name, err)
-	}
-
-	list, err := client.AppsV1().ControllerRevisions(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("list controller revisions for statefulset %s: %w", name, err)
-	}
-
-	templatesByRevision := make(map[int64]corev1.PodTemplateSpec)
-	revisionOrder := make([]int64, 0)
-	currentRevision := int64(0)
-
-	for i := range list.Items {
-		rev := list.Items[i]
-		if !controllerRevisionOwnedByStatefulSet(rev, sts) {
-			continue
-		}
-		template, err := podTemplateFromControllerRevision(rev)
-		if err != nil {
-			return nil, err
-		}
-		if _, exists := templatesByRevision[rev.Revision]; !exists {
-			revisionOrder = append(revisionOrder, rev.Revision)
-		}
-		templatesByRevision[rev.Revision] = *template
-		if rev.Name == sts.Status.CurrentRevision {
-			currentRevision = rev.Revision
-		}
-	}
-
-	if len(templatesByRevision) == 0 {
-		return nil, fmt.Errorf("no rollout revisions found for statefulset/%s", name)
-	}
-
-	sort.SliceStable(revisionOrder, func(i, j int) bool { return revisionOrder[i] < revisionOrder[j] })
-	targetRevision, err := pickTargetRevision(revisionOrder, currentRevision, toRevision)
-	if err != nil {
 		return nil, err
-	}
-
-	sts.Spec.Template = templatesByRevision[targetRevision]
-	if _, err := client.AppsV1().StatefulSets(namespace).Update(ctx, sts, metav1.UpdateOptions{}); err != nil {
-		return nil, fmt.Errorf("update statefulset %s for rollback: %w", name, err)
 	}
 
 	if timeout > 0 {
 		if out != nil {
-			_, _ = fmt.Fprintf(out, "Waiting for statefulset rollout to revision %d...\n", targetRevision)
+			_, _ = fmt.Fprintf(out, "Waiting for statefulset rollout to revision %d...\n", result.ToRevision)
 		}
 		if err := waitStatefulSetRollout(ctx, client, namespace, name, timeout, out); err != nil {
 			return nil, err
 		}
 	}
 
-	return &UndoRolloutResult{
-		Kind:         KindStatefulSet,
-		Name:         sts.Name,
-		Namespace:    sts.Namespace,
-		FromRevision: currentRevision,
-		ToRevision:   targetRevision,
-	}, nil
+	return &result, nil
+}
+
+func listStatefulSetControllerRevisions(ctx context.Context, client kubernetes.Interface, namespace string, sts *appsv1.StatefulSet) (*appsv1.ControllerRevisionList, error) {
+	selector, err := SelectorFromLabelSelector(sts.Spec.Selector)
+	if err != nil {
+		return nil, fmt.Errorf("statefulset %s selector: %w", sts.Name, err)
+	}
+
+	listOptions := metav1.ListOptions{}
+	if selector != "" {
+		listOptions.LabelSelector = selector
+	}
+
+	list, err := client.AppsV1().ControllerRevisions(namespace).List(ctx, listOptions)
+	if err != nil {
+		return nil, err
+	}
+
+	// Some clusters may not preserve StatefulSet selector labels on ControllerRevisions.
+	if selector != "" && len(list.Items) == 0 {
+		return client.AppsV1().ControllerRevisions(namespace).List(ctx, metav1.ListOptions{})
+	}
+
+	return list, nil
 }
 
 func applyContainerImageUpdates(podSpec *corev1.PodSpec, updates map[string]string) (map[string]string, error) {

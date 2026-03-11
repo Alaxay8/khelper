@@ -163,6 +163,35 @@ func TestClearEvictedPodsDoesNotCountAlreadyGoneAsDeleted(t *testing.T) {
 	}
 }
 
+func TestListEvictedPodsUsesFailedPhaseFieldSelector(t *testing.T) {
+	t.Parallel()
+
+	client := fake.NewSimpleClientset(
+		testPodWithReason("shop", "payment-evicted", "Evicted"),
+		testPodWithReason("shop", "payment-running", "Running"),
+	)
+
+	if _, err := ListEvictedPods(context.Background(), client, "shop"); err != nil {
+		t.Fatalf("ListEvictedPods returned error: %v", err)
+	}
+
+	var found bool
+	for _, action := range client.Actions() {
+		listAction, ok := action.(k8stesting.ListAction)
+		if !ok || action.GetResource().Resource != "pods" {
+			continue
+		}
+		found = true
+		if got := listAction.GetListRestrictions().Fields.String(); got != "status.phase=Failed" {
+			t.Fatalf("expected pod list field selector status.phase=Failed, got %q", got)
+		}
+	}
+
+	if !found {
+		t.Fatal("expected at least one pod list action")
+	}
+}
+
 func testPodWithReason(namespace, name, reason string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{

@@ -1,6 +1,7 @@
 module github.com/alaxay8/khelper
 
 go 1.22.0
+toolchain go1.26.1
 
 require (
 	github.com/spf13/cobra v1.8.1

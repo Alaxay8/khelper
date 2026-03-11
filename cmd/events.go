@@ -73,13 +73,14 @@ func newEventsCmd() *cobra.Command {
 			}
 
 			scope := buildEventScope(workload, pods, replicaSetNames)
-			eventList, err := bundle.Clientset.CoreV1().Events(bundle.Namespace).List(cmd.Context(), metav1.ListOptions{})
+			eventRefs := eventScopeObjectRefs(scope)
+			eventList, err := kube.ListEventsByObjects(cmd.Context(), bundle.Clientset, workload.Namespace, eventRefs)
 			if err != nil {
-				return WrapExitError(ExitCodeGeneral, err, "list events")
+				return WrapExitError(ExitCodeGeneral, err, "list related events")
 			}
 
 			now := time.Now()
-			filtered := filterRelatedEvents(eventList.Items, scope, since, now, warningsOnly)
+			filtered := filterRelatedEvents(eventList, scope, since, now, warningsOnly)
 			summaries := summarizeEvents(filtered)
 
 			if handled, err := writeJSONIfRequested(cmd, summaries); err != nil {
@@ -131,7 +132,7 @@ func relatedReplicaSetNames(ctx context.Context, bundle *kube.ClientBundle, work
 		return names, nil
 	}
 
-	replicaSets, err := bundle.Clientset.AppsV1().ReplicaSets(bundle.Namespace).List(ctx, metav1.ListOptions{
+	replicaSets, err := bundle.Clientset.AppsV1().ReplicaSets(workload.Namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: workload.Selector,
 	})
 	if err != nil {
@@ -180,13 +181,47 @@ func buildEventScope(workload kube.WorkloadRef, pods []corev1.Pod, replicaSetNam
 		for rsName := range replicaSetNames {
 			scope.podNamePrefixes = append(scope.podNamePrefixes, rsName+"-")
 		}
-		// Fallback for events that reference pods from rollout history when old RS is already gone.
-		scope.podNamePrefixes = append(scope.podNamePrefixes, workload.Name+"-")
 	case kube.KindStatefulSet:
 		scope.podNamePrefixes = append(scope.podNamePrefixes, workload.Name+"-")
 	}
 
 	return scope
+}
+
+func eventScopeObjectRefs(scope eventScope) []kube.EventObjectRef {
+	refs := make([]kube.EventObjectRef, 0, len(scope.podNames)+len(scope.replicaSetNames)+1)
+	if strings.TrimSpace(scope.workloadKind) != "" && strings.TrimSpace(scope.workloadName) != "" {
+		refs = append(refs, kube.EventObjectRef{
+			Kind: scope.workloadKind,
+			Name: scope.workloadName,
+		})
+	}
+
+	podNames := make([]string, 0, len(scope.podNames))
+	for name := range scope.podNames {
+		podNames = append(podNames, name)
+	}
+	sort.Strings(podNames)
+	for i := range podNames {
+		refs = append(refs, kube.EventObjectRef{
+			Kind: kube.KindPod,
+			Name: podNames[i],
+		})
+	}
+
+	replicaSetNames := make([]string, 0, len(scope.replicaSetNames))
+	for name := range scope.replicaSetNames {
+		replicaSetNames = append(replicaSetNames, name)
+	}
+	sort.Strings(replicaSetNames)
+	for i := range replicaSetNames {
+		refs = append(refs, kube.EventObjectRef{
+			Kind: "replicaset",
+			Name: replicaSetNames[i],
+		})
+	}
+
+	return refs
 }
 
 func filterRelatedEvents(events []corev1.Event, scope eventScope, since time.Duration, now time.Time, warningsOnly bool) []corev1.Event {

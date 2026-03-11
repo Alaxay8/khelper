@@ -95,11 +95,13 @@ Examples:
 ./scripts/install.sh
 ./scripts/install.sh --mode local
 ./scripts/install.sh --mode build
-./scripts/install.sh --mode release --version v0.1.0
+./scripts/install.sh --mode release --version v0.1.0 --checksum <sha256>
 ```
 
 On Linux, `auto` mode can install Go via package manager (`apt`, `dnf`, `yum`, `zypper`, `apk`, `pacman`) if Go is missing.
 It requires root/sudo privileges and internet access.
+
+For `--mode release`, checksum verification is required (`--checksum`) unless you explicitly opt out with `--insecure-no-checksum`.
 
 You can also run:
 
@@ -157,6 +159,7 @@ kubeconfig: /Users/you/.kube/config
 context: dev-cluster
 namespace: shop
 output: table
+request_timeout: 30s
 ```
 
 Environment variables are also supported:
@@ -166,6 +169,7 @@ Environment variables are also supported:
 - `KHELPER_NAMESPACE`
 - `KHELPER_OUTPUT`
 - `KHELPER_VERBOSE`
+- `KHELPER_REQUEST_TIMEOUT`
 
 ## Global Flags
 
@@ -174,6 +178,7 @@ Environment variables are also supported:
 - `--namespace, -n string`
 - `--verbose`
 - `--output, -o table|json`
+- `--request-timeout duration` (default: `30s`, set `0` to disable)
 
 ## Commands
 
@@ -393,6 +398,8 @@ Given a target like `payment`:
 6. For logs/shell/doctor pod resolution, choose newest `Running` pod by `startTime`; if none are running, choose the newest pod and warn.
 
 ## Development
+
+Use Go toolchain `1.26.1` or newer.
 
 ```bash
 make lint

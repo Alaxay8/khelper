@@ -37,7 +37,9 @@ func ListEvictedPods(ctx context.Context, client kubernetes.Interface, namespace
 		listNamespace = metav1.NamespaceAll
 	}
 
-	podList, err := client.CoreV1().Pods(listNamespace).List(ctx, metav1.ListOptions{})
+	podList, err := client.CoreV1().Pods(listNamespace).List(ctx, metav1.ListOptions{
+		FieldSelector: "status.phase=Failed",
+	})
 	if err != nil {
 		return nil, fmt.Errorf("list pods: %w", err)
 	}

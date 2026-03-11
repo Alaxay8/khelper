@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -28,6 +29,9 @@ func TestLoadDefaults(t *testing.T) {
 	if !filepath.IsAbs(cfg.Kubeconfig) {
 		t.Fatalf("expected absolute kubeconfig path, got %q", cfg.Kubeconfig)
 	}
+	if cfg.RequestTimeout != DefaultRequestTimeout {
+		t.Fatalf("expected default request timeout %s, got %s", DefaultRequestTimeout, cfg.RequestTimeout)
+	}
 }
 
 func TestLoadNormalizesFields(t *testing.T) {
@@ -39,6 +43,7 @@ func TestLoadNormalizesFields(t *testing.T) {
 	v.Set("namespace", " shop  ")
 	v.Set("output", " JSON ")
 	v.Set("verbose", true)
+	v.Set("request_timeout", " 45s ")
 
 	cfg, err := Load(v)
 	if err != nil {
@@ -65,6 +70,9 @@ func TestLoadNormalizesFields(t *testing.T) {
 	if !cfg.Verbose {
 		t.Fatal("expected verbose=true")
 	}
+	if cfg.RequestTimeout != 45*time.Second {
+		t.Fatalf("unexpected request timeout: %s", cfg.RequestTimeout)
+	}
 }
 
 func TestLoadRejectsInvalidOutput(t *testing.T) {
@@ -78,6 +86,21 @@ func TestLoadRejectsInvalidOutput(t *testing.T) {
 		t.Fatal("expected error for invalid output")
 	}
 	if !strings.Contains(err.Error(), "invalid output format") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadRejectsNegativeRequestTimeout(t *testing.T) {
+	t.Parallel()
+
+	v := viper.New()
+	v.Set("request_timeout", "-1s")
+
+	_, err := Load(v)
+	if err == nil {
+		t.Fatal("expected error for negative request_timeout")
+	}
+	if !strings.Contains(err.Error(), "request timeout must be >= 0") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
