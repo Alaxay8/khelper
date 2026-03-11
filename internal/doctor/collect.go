@@ -13,6 +13,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 const maxLogEvidenceBytes = 4096
@@ -277,6 +278,11 @@ func relatedReplicaSetNames(ctx context.Context, bundle *kube.ClientBundle, work
 		return names, nil
 	}
 
+	deployment, err := bundle.Clientset.AppsV1().Deployments(workload.Namespace).Get(ctx, workload.Name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("get deployment %s: %w", workload.Name, err)
+	}
+
 	replicaSets, err := bundle.Clientset.AppsV1().ReplicaSets(workload.Namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: workload.Selector,
 	})
@@ -286,7 +292,7 @@ func relatedReplicaSetNames(ctx context.Context, bundle *kube.ClientBundle, work
 
 	for i := range replicaSets.Items {
 		rs := replicaSets.Items[i]
-		if replicaSetOwnedByDeployment(rs, workload.Name) {
+		if replicaSetOwnedByDeployment(rs, workload.Name, deployment.UID) {
 			names[rs.Name] = struct{}{}
 		}
 	}
@@ -294,13 +300,20 @@ func relatedReplicaSetNames(ctx context.Context, bundle *kube.ClientBundle, work
 	return names, nil
 }
 
-func replicaSetOwnedByDeployment(rs appsv1.ReplicaSet, deploymentName string) bool {
+func replicaSetOwnedByDeployment(rs appsv1.ReplicaSet, deploymentName string, deploymentUID types.UID) bool {
 	for _, owner := range rs.OwnerReferences {
-		if strings.EqualFold(owner.Kind, "Deployment") && owner.Name == deploymentName {
-			return true
+		if !strings.EqualFold(owner.Kind, "Deployment") {
+			continue
 		}
+		if owner.Name != deploymentName {
+			continue
+		}
+		if deploymentUID != "" && owner.UID != "" && owner.UID != deploymentUID {
+			return false
+		}
+		return true
 	}
-	return strings.HasPrefix(rs.Name, deploymentName+"-")
+	return false
 }
 
 func isRelatedEvent(event corev1.Event, snapshot *Snapshot, relatedReplicaSets map[string]struct{}, podPrefixes []string) bool {

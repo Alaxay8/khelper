@@ -354,6 +354,92 @@ func TestCollectIncludesStalePodEventsByReplicaSetPrefix(t *testing.T) {
 	}
 }
 
+func TestRelatedReplicaSetNamesIgnoresPrefixMatchWithoutOwner(t *testing.T) {
+	t.Parallel()
+
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "payment",
+			Namespace: "shop",
+			UID:       types.UID("dep-uid"),
+		},
+	}
+	replicaSet := &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "payment-7f4d9b4b5",
+			Namespace: "shop",
+			Labels:    map[string]string{"app": "payment"},
+		},
+	}
+
+	bundle := &kube.ClientBundle{
+		Clientset: fake.NewSimpleClientset(deployment, replicaSet),
+		Namespace: "default",
+	}
+	workload := kube.WorkloadRef{
+		Kind:      kube.KindDeployment,
+		Name:      "payment",
+		Namespace: "shop",
+		Selector:  "app=payment",
+	}
+
+	names, err := relatedReplicaSetNames(context.Background(), bundle, workload)
+	if err != nil {
+		t.Fatalf("relatedReplicaSetNames returned error: %v", err)
+	}
+
+	if len(names) != 0 {
+		t.Fatalf("expected no ReplicaSet names for prefix-only match, got %+v", names)
+	}
+}
+
+func TestRelatedReplicaSetNamesIgnoresOwnerUIDMismatch(t *testing.T) {
+	t.Parallel()
+
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "payment",
+			Namespace: "shop",
+			UID:       types.UID("dep-current"),
+		},
+	}
+	replicaSet := &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "payment-7f4d9b4b5",
+			Namespace: "shop",
+			Labels:    map[string]string{"app": "payment"},
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion: "apps/v1",
+					Kind:       "Deployment",
+					Name:       "payment",
+					UID:        types.UID("dep-old"),
+				},
+			},
+		},
+	}
+
+	bundle := &kube.ClientBundle{
+		Clientset: fake.NewSimpleClientset(deployment, replicaSet),
+		Namespace: "default",
+	}
+	workload := kube.WorkloadRef{
+		Kind:      kube.KindDeployment,
+		Name:      "payment",
+		Namespace: "shop",
+		Selector:  "app=payment",
+	}
+
+	names, err := relatedReplicaSetNames(context.Background(), bundle, workload)
+	if err != nil {
+		t.Fatalf("relatedReplicaSetNames returned error: %v", err)
+	}
+
+	if len(names) != 0 {
+		t.Fatalf("expected no ReplicaSet names for owner UID mismatch, got %+v", names)
+	}
+}
+
 func int32Ptr(value int32) *int32 {
 	return &value
 }
