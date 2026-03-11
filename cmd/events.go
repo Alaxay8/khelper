@@ -74,7 +74,13 @@ func newEventsCmd() *cobra.Command {
 
 			scope := buildEventScope(workload, pods, replicaSetNames)
 			eventRefs := eventScopeObjectRefs(scope)
-			eventList, err := kube.ListEventsByObjects(cmd.Context(), bundle.Clientset, workload.Namespace, eventRefs)
+			eventList, err := kube.ListEventsByObjectsWithPodNamePrefixes(
+				cmd.Context(),
+				bundle.Clientset,
+				workload.Namespace,
+				eventRefs,
+				scope.podNamePrefixes,
+			)
 			if err != nil {
 				return WrapExitError(ExitCodeGeneral, err, "list related events")
 			}

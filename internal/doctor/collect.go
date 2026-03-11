@@ -157,7 +157,7 @@ func listRelatedEvents(ctx context.Context, bundle *kube.ClientBundle, snapshot 
 	}
 
 	refs := relatedEventObjectRefs(snapshot, relatedReplicaSets)
-	list, err := kube.ListEventsByObjects(ctx, bundle.Clientset, namespace, refs)
+	list, err := kube.ListEventsByObjectsWithPodNamePrefixes(ctx, bundle.Clientset, namespace, refs, podNamePrefixes(snapshot, relatedReplicaSets))
 	if err != nil {
 		return nil, fmt.Errorf("list related events: %w", err)
 	}
@@ -243,6 +243,31 @@ func relatedEventObjectRefs(snapshot *Snapshot, relatedReplicaSets map[string]st
 	}
 
 	return refs
+}
+
+func podNamePrefixes(snapshot *Snapshot, relatedReplicaSets map[string]struct{}) []string {
+	if snapshot == nil {
+		return nil
+	}
+
+	prefixes := make([]string, 0, len(relatedReplicaSets)+1)
+	switch snapshot.Workload.Kind {
+	case kube.KindDeployment:
+		for name := range relatedReplicaSets {
+			if strings.TrimSpace(name) == "" {
+				continue
+			}
+			prefixes = append(prefixes, name+"-")
+		}
+	case kube.KindStatefulSet:
+		name := strings.TrimSpace(snapshot.Workload.Name)
+		if name != "" {
+			prefixes = append(prefixes, name+"-")
+		}
+	}
+
+	sort.Strings(prefixes)
+	return prefixes
 }
 
 func relatedReplicaSetNames(ctx context.Context, bundle *kube.ClientBundle, workload kube.WorkloadRef) (map[string]struct{}, error) {
