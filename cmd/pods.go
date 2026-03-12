@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/alaxay8/khelper/internal/kube"
@@ -170,8 +171,11 @@ func podStatus(pod corev1.Pod) string {
 		if s.State.Waiting != nil && s.State.Waiting.Reason != "" {
 			return s.State.Waiting.Reason
 		}
-		if s.State.Terminated != nil && s.State.Terminated.Reason != "" {
-			return s.State.Terminated.Reason
+		if s.State.Terminated != nil {
+			reason := strings.TrimSpace(s.State.Terminated.Reason)
+			if reason != "" && !strings.EqualFold(reason, "Completed") {
+				return reason
+			}
 		}
 	}
 
@@ -206,6 +210,9 @@ func humanDurationSince(t time.Time) string {
 		return "unknown"
 	}
 	d := time.Since(t)
+	if d < 0 {
+		d = 0
+	}
 	if d < time.Minute {
 		return fmt.Sprintf("%ds", int(d.Seconds()))
 	}

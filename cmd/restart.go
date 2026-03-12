@@ -11,6 +11,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	newRestartClientBundle = newClientBundle
+	rolloutRestartFn       = kube.RolloutRestart
+)
+
 func newRestartCmd() *cobra.Command {
 	var timeout time.Duration
 	var kind string
@@ -27,7 +32,7 @@ func newRestartCmd() *cobra.Command {
 				return NewExitError(ExitCodeUsage, "restart supports only deployment or statefulset")
 			}
 
-			bundle, err := newClientBundle()
+			bundle, err := newRestartClientBundle()
 			if err != nil {
 				return err
 			}
@@ -42,7 +47,7 @@ func newRestartCmd() *cobra.Command {
 				return NewExitError(ExitCodeUsage, fmt.Sprintf("restart supports only deployment/statefulset, got %s/%s", workload.Kind, workload.Name))
 			}
 
-			if err := kube.RolloutRestart(cmd.Context(), bundle.Clientset, bundle.Namespace, workload.Kind, workload.Name, timeout, cmd.OutOrStdout()); err != nil {
+			if err := rolloutRestartFn(cmd.Context(), bundle.Clientset, restartNamespace(workload, bundle.Namespace), workload.Kind, workload.Name, timeout, cmd.OutOrStdout()); err != nil {
 				return WrapExitError(ExitCodeGeneral, err, "restart %s/%s", workload.Kind, workload.Name)
 			}
 			return nil
@@ -79,4 +84,12 @@ func resolveRestartWorkload(ctx context.Context, resolver *kube.Resolver, namesp
 		return kube.WorkloadRef{}, &kube.NotFoundError{Namespace: namespace, Target: target, Kind: "deployment/statefulset"}
 	}
 	return kube.WorkloadRef{}, err
+}
+
+func restartNamespace(workload kube.WorkloadRef, fallback string) string {
+	namespace := strings.TrimSpace(workload.Namespace)
+	if namespace == "" || namespace == kube.NamespaceAll {
+		return fallback
+	}
+	return namespace
 }

@@ -2,10 +2,16 @@ package cmd
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/alaxay8/khelper/internal/kube"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 func TestParseImageAssignments(t *testing.T) {
@@ -167,5 +173,98 @@ func TestSetImageCommandHelpArg(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "Usage:") {
 		t.Fatalf("expected help output to contain Usage, got: %s", out.String())
+	}
+}
+
+func TestResolveSetImageWorkloadPrefersDeploymentAmbiguityError(t *testing.T) {
+	t.Parallel()
+
+	client := fake.NewSimpleClientset(
+		testSetImageDeployment("shop", "dep-a", map[string]string{"app": "frontend"}),
+		testSetImageDeployment("shop", "dep-b", map[string]string{"app": "frontend"}),
+		testSetImageStatefulSet("shop", "frontend", map[string]string{"app": "db"}),
+	)
+
+	resolver := kube.NewResolver(client)
+	_, err := resolveSetImageWorkload(
+		context.Background(),
+		resolver,
+		"shop",
+		"frontend",
+		"",
+		0,
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+	if err == nil {
+		t.Fatal("expected ambiguity error")
+	}
+
+	var ambiguous *kube.AmbiguousMatchError
+	if !errors.As(err, &ambiguous) {
+		t.Fatalf("expected AmbiguousMatchError, got %T (%v)", err, err)
+	}
+	if ambiguous.Kind != kube.KindDeployment {
+		t.Fatalf("expected ambiguous deployment error, got kind %q", ambiguous.Kind)
+	}
+}
+
+func TestResolveSetImageWorkloadPrefersDeploymentPickError(t *testing.T) {
+	t.Parallel()
+
+	client := fake.NewSimpleClientset(
+		testSetImageDeployment("shop", "dep-a", map[string]string{"app": "frontend"}),
+		testSetImageDeployment("shop", "dep-b", map[string]string{"app": "frontend"}),
+		testSetImageStatefulSet("shop", "frontend", map[string]string{"app": "db"}),
+	)
+
+	resolver := kube.NewResolver(client)
+	_, err := resolveSetImageWorkload(
+		context.Background(),
+		resolver,
+		"shop",
+		"frontend",
+		"",
+		99,
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+	if err == nil {
+		t.Fatal("expected invalid pick error")
+	}
+
+	var invalidPick *kube.InvalidPickError
+	if !errors.As(err, &invalidPick) {
+		t.Fatalf("expected InvalidPickError, got %T (%v)", err, err)
+	}
+}
+
+func testSetImageDeployment(namespace, name string, labels map[string]string) *appsv1.Deployment {
+	replicas := int32(1)
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: labels},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{MatchLabels: labels},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "nginx"}}},
+			},
+		},
+	}
+}
+
+func testSetImageStatefulSet(namespace, name string, labels map[string]string) *appsv1.StatefulSet {
+	replicas := int32(1)
+	return &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: labels},
+		Spec: appsv1.StatefulSetSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{MatchLabels: labels},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "db", Image: "postgres:16"}}},
+			},
+		},
 	}
 }

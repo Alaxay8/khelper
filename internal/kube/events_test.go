@@ -111,6 +111,41 @@ func TestListEventsByObjectsUsesObjectScopedQueriesForLargeInput(t *testing.T) {
 	}
 }
 
+func TestListEventsByObjectsWithPodNamePrefixesIncludesPrefixMatches(t *testing.T) {
+	t.Parallel()
+
+	client := fake.NewSimpleClientset(
+		testEvent("stale-pod-event", "shop", "Pod", "frontend-84578d7b58-6v59m"),
+		testEvent("current-pod-event", "shop", "Pod", "frontend-84578d7b58-k8mtn"),
+		testEvent("foreign-pod-event", "shop", "Pod", "checkout-7bf5f9d8cf-2nfhx"),
+	)
+
+	events, err := ListEventsByObjectsWithPodNamePrefixes(context.Background(), client, "shop", []EventObjectRef{
+		{Kind: KindDeployment, Name: "frontend"},
+		{Kind: "replicaset", Name: "frontend-84578d7b58"},
+	}, []string{"frontend-84578d7b58-"})
+	if err != nil {
+		t.Fatalf("ListEventsByObjectsWithPodNamePrefixes returned error: %v", err)
+	}
+
+	if len(events) != 2 {
+		t.Fatalf("expected 2 matching pod prefix events, got %d", len(events))
+	}
+
+	got := map[string]struct{}{}
+	for i := range events {
+		got[events[i].Name] = struct{}{}
+	}
+	for _, name := range []string{"stale-pod-event", "current-pod-event"} {
+		if _, ok := got[name]; !ok {
+			t.Fatalf("expected event %q in results, got %+v", name, got)
+		}
+	}
+	if _, ok := got["foreign-pod-event"]; ok {
+		t.Fatalf("did not expect foreign pod event in results: %+v", got)
+	}
+}
+
 func testEvent(name, namespace, kind, objectName string) *corev1.Event {
 	return &corev1.Event{
 		ObjectMeta: metav1.ObjectMeta{

@@ -51,3 +51,12 @@ func TestExitCodeExplicitExitErrorKeepsExplicitCode(t *testing.T) {
 		t.Fatalf("expected exit code %d, got %d", ExitCodeUsage, got)
 	}
 }
+
+func TestExitCodeInvalidKindMapsToUsage(t *testing.T) {
+	t.Parallel()
+
+	err := WrapExitError(ExitCodeGeneral, kube.ErrInvalidKind, "resolve target kind")
+	if got := exitCode(err); got != ExitCodeUsage {
+		t.Fatalf("expected exit code %d, got %d", ExitCodeUsage, got)
+	}
+}

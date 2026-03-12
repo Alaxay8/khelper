@@ -27,7 +27,8 @@ type NodeMetricSummary struct {
 }
 
 func ListPodMetrics(ctx context.Context, client metricsclient.Interface, namespace string) ([]PodMetricSummary, error) {
-	metrics, err := client.MetricsV1beta1().PodMetricses(namespace).List(ctx, metav1.ListOptions{})
+	metricsNamespace := normalizeMetricsNamespace(namespace)
+	metrics, err := client.MetricsV1beta1().PodMetricses(metricsNamespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, normalizeMetricsError(err)
 	}
@@ -94,4 +95,11 @@ func normalizeMetricsError(err error) error {
 	}
 
 	return fmt.Errorf("query metrics API: %w", err)
+}
+
+func normalizeMetricsNamespace(namespace string) string {
+	if strings.TrimSpace(namespace) == NamespaceAll {
+		return metav1.NamespaceAll
+	}
+	return namespace
 }

@@ -21,8 +21,21 @@ type EventObjectRef struct {
 // ListEventsByObjects fetches events for a specific set of involved objects.
 // It deduplicates events returned from multiple API requests.
 func ListEventsByObjects(ctx context.Context, client kubernetes.Interface, namespace string, refs []EventObjectRef) ([]corev1.Event, error) {
+	return ListEventsByObjectsWithPodNamePrefixes(ctx, client, namespace, refs, nil)
+}
+
+// ListEventsByObjectsWithPodNamePrefixes fetches events for exact objects and, optionally,
+// pod events whose involvedObject.name starts with one of provided prefixes.
+func ListEventsByObjectsWithPodNamePrefixes(
+	ctx context.Context,
+	client kubernetes.Interface,
+	namespace string,
+	refs []EventObjectRef,
+	podNamePrefixes []string,
+) ([]corev1.Event, error) {
 	grouped := groupEventObjectRefs(refs)
-	if len(grouped) == 0 {
+	podNamePrefixes = normalizePodNamePrefixes(podNamePrefixes)
+	if len(grouped) == 0 && len(podNamePrefixes) == 0 {
 		return nil, nil
 	}
 
@@ -40,6 +53,14 @@ func ListEventsByObjects(ctx context.Context, client kubernetes.Interface, names
 			}
 			appendUniqueEvents(dedup, items)
 		}
+	}
+
+	if len(podNamePrefixes) > 0 {
+		items, err := listEventsByKind(ctx, client, namespace, KindPod)
+		if err != nil {
+			return nil, err
+		}
+		appendUniqueEvents(dedup, filterEventsByPodNamePrefix(items, podNamePrefixes))
 	}
 
 	return sortedEventValues(dedup), nil
@@ -74,6 +95,18 @@ func listEventsByObject(ctx context.Context, client kubernetes.Interface, namesp
 	return filterEventsByObject(list.Items, kind, name), nil
 }
 
+func listEventsByKind(ctx context.Context, client kubernetes.Interface, namespace, kind string) ([]corev1.Event, error) {
+	kubeKind := involvedObjectFieldKind(kind)
+	selector := fields.Set{
+		"involvedObject.kind": kubeKind,
+	}.String()
+	list, err := client.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{FieldSelector: selector})
+	if err != nil {
+		return nil, fmt.Errorf("list events for kind %s: %w", kind, err)
+	}
+	return filterEventsByKind(list.Items, kind), nil
+}
+
 func filterEventsByObject(events []corev1.Event, kind, name string) []corev1.Event {
 	filtered := make([]corev1.Event, 0, len(events))
 	for i := range events {
@@ -85,6 +118,36 @@ func filterEventsByObject(events []corev1.Event, kind, name string) []corev1.Eve
 			continue
 		}
 		filtered = append(filtered, event)
+	}
+	return filtered
+}
+
+func filterEventsByKind(events []corev1.Event, kind string) []corev1.Event {
+	filtered := make([]corev1.Event, 0, len(events))
+	for i := range events {
+		event := events[i]
+		if normalizeEventObjectKind(event.InvolvedObject.Kind) != kind {
+			continue
+		}
+		filtered = append(filtered, event)
+	}
+	return filtered
+}
+
+func filterEventsByPodNamePrefix(events []corev1.Event, prefixes []string) []corev1.Event {
+	filtered := make([]corev1.Event, 0, len(events))
+	for i := range events {
+		event := events[i]
+		if normalizeEventObjectKind(event.InvolvedObject.Kind) != KindPod {
+			continue
+		}
+		name := strings.TrimSpace(event.InvolvedObject.Name)
+		if name == "" {
+			continue
+		}
+		if hasAnyPrefix(name, prefixes) {
+			filtered = append(filtered, event)
+		}
 	}
 	return filtered
 }
@@ -158,4 +221,38 @@ func sortedSetKeys(values map[string]struct{}) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func normalizePodNamePrefixes(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+
+	uniq := make(map[string]struct{}, len(values))
+	for i := range values {
+		value := strings.TrimSpace(values[i])
+		if value == "" {
+			continue
+		}
+		uniq[value] = struct{}{}
+	}
+	if len(uniq) == 0 {
+		return nil
+	}
+
+	normalized := make([]string, 0, len(uniq))
+	for value := range uniq {
+		normalized = append(normalized, value)
+	}
+	sort.Strings(normalized)
+	return normalized
+}
+
+func hasAnyPrefix(name string, prefixes []string) bool {
+	for i := range prefixes {
+		if strings.HasPrefix(name, prefixes[i]) {
+			return true
+		}
+	}
+	return false
 }

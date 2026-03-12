@@ -293,6 +293,10 @@ func resolveSetImageWorkload(
 		return deployment, nil
 	}
 	if stsErr == nil {
+		var notFound *kube.NotFoundError
+		if !errors.As(depErr, &notFound) {
+			return kube.WorkloadRef{}, depErr
+		}
 		return statefulSet, nil
 	}
 

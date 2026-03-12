@@ -280,6 +280,166 @@ func TestCollectIncludesRelatedReplicaSetEvents(t *testing.T) {
 	}
 }
 
+func TestCollectIncludesStalePodEventsByReplicaSetPrefix(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	namespace := "shop"
+	labels := map[string]string{"app": "payment"}
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "payment", Namespace: namespace, UID: "dep-uid", Labels: labels},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: int32Ptr(1),
+			Selector: &metav1.LabelSelector{MatchLabels: labels},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "nginx"}}},
+			},
+		},
+	}
+	currentPodStart := metav1.NewTime(now.Add(-1 * time.Minute))
+	currentPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "payment-6d98f", Namespace: namespace, Labels: labels, UID: "payment-current"},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "nginx"}}},
+		Status: corev1.PodStatus{
+			Phase:     corev1.PodRunning,
+			StartTime: &currentPodStart,
+		},
+	}
+	replicaSet := &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "payment-744f7c74d9",
+			Namespace: namespace,
+			Labels:    labels,
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion: "apps/v1",
+					Kind:       "Deployment",
+					Name:       "payment",
+					UID:        types.UID("dep-uid"),
+				},
+			},
+		},
+	}
+	stalePodEvent := &corev1.Event{
+		ObjectMeta: metav1.ObjectMeta{Name: "payment-stale-pod-warning", Namespace: namespace},
+		InvolvedObject: corev1.ObjectReference{
+			Kind:      "Pod",
+			Name:      "payment-744f7c74d9-6v59m",
+			Namespace: namespace,
+		},
+		Type:          corev1.EventTypeWarning,
+		Reason:        "Unhealthy",
+		Message:       "Readiness probe failed",
+		LastTimestamp: metav1.NewTime(now.Add(-90 * time.Second)),
+	}
+
+	client := fake.NewSimpleClientset(dep, currentPod, replicaSet, stalePodEvent)
+	bundle := &kube.ClientBundle{Clientset: client, Namespace: namespace}
+
+	snapshot, err := Collect(context.Background(), bundle, "payment", CollectOptions{
+		Since:    time.Hour,
+		LogsTail: 0,
+		Now:      now,
+	})
+	if err != nil {
+		t.Fatalf("collect returned error: %v", err)
+	}
+
+	if len(snapshot.Events) != 1 {
+		t.Fatalf("expected stale pod event to be included via ReplicaSet prefix, got %d events", len(snapshot.Events))
+	}
+	if snapshot.Events[0].Name != "payment-stale-pod-warning" {
+		t.Fatalf("expected stale pod event, got %s", snapshot.Events[0].Name)
+	}
+}
+
+func TestRelatedReplicaSetNamesIgnoresPrefixMatchWithoutOwner(t *testing.T) {
+	t.Parallel()
+
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "payment",
+			Namespace: "shop",
+			UID:       types.UID("dep-uid"),
+		},
+	}
+	replicaSet := &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "payment-7f4d9b4b5",
+			Namespace: "shop",
+			Labels:    map[string]string{"app": "payment"},
+		},
+	}
+
+	bundle := &kube.ClientBundle{
+		Clientset: fake.NewSimpleClientset(deployment, replicaSet),
+		Namespace: "default",
+	}
+	workload := kube.WorkloadRef{
+		Kind:      kube.KindDeployment,
+		Name:      "payment",
+		Namespace: "shop",
+		Selector:  "app=payment",
+	}
+
+	names, err := relatedReplicaSetNames(context.Background(), bundle, workload)
+	if err != nil {
+		t.Fatalf("relatedReplicaSetNames returned error: %v", err)
+	}
+
+	if len(names) != 0 {
+		t.Fatalf("expected no ReplicaSet names for prefix-only match, got %+v", names)
+	}
+}
+
+func TestRelatedReplicaSetNamesIgnoresOwnerUIDMismatch(t *testing.T) {
+	t.Parallel()
+
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "payment",
+			Namespace: "shop",
+			UID:       types.UID("dep-current"),
+		},
+	}
+	replicaSet := &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "payment-7f4d9b4b5",
+			Namespace: "shop",
+			Labels:    map[string]string{"app": "payment"},
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion: "apps/v1",
+					Kind:       "Deployment",
+					Name:       "payment",
+					UID:        types.UID("dep-old"),
+				},
+			},
+		},
+	}
+
+	bundle := &kube.ClientBundle{
+		Clientset: fake.NewSimpleClientset(deployment, replicaSet),
+		Namespace: "default",
+	}
+	workload := kube.WorkloadRef{
+		Kind:      kube.KindDeployment,
+		Name:      "payment",
+		Namespace: "shop",
+		Selector:  "app=payment",
+	}
+
+	names, err := relatedReplicaSetNames(context.Background(), bundle, workload)
+	if err != nil {
+		t.Fatalf("relatedReplicaSetNames returned error: %v", err)
+	}
+
+	if len(names) != 0 {
+		t.Fatalf("expected no ReplicaSet names for owner UID mismatch, got %+v", names)
+	}
+}
+
 func int32Ptr(value int32) *int32 {
 	return &value
 }

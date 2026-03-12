@@ -13,6 +13,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 const maxLogEvidenceBytes = 4096
@@ -157,7 +158,8 @@ func listRelatedEvents(ctx context.Context, bundle *kube.ClientBundle, snapshot 
 	}
 
 	refs := relatedEventObjectRefs(snapshot, relatedReplicaSets)
-	list, err := kube.ListEventsByObjects(ctx, bundle.Clientset, namespace, refs)
+	prefixes := podNamePrefixes(snapshot, relatedReplicaSets)
+	list, err := kube.ListEventsByObjectsWithPodNamePrefixes(ctx, bundle.Clientset, namespace, refs, prefixes)
 	if err != nil {
 		return nil, fmt.Errorf("list related events: %w", err)
 	}
@@ -173,7 +175,7 @@ func listRelatedEvents(ctx context.Context, bundle *kube.ClientBundle, snapshot 
 
 	related := make([]corev1.Event, 0)
 	for _, event := range list {
-		if !isRelatedEvent(event, snapshot, relatedReplicaSets) {
+		if !isRelatedEvent(event, snapshot, relatedReplicaSets, prefixes) {
 			continue
 		}
 		ts := eventTimestamp(event)
@@ -245,10 +247,40 @@ func relatedEventObjectRefs(snapshot *Snapshot, relatedReplicaSets map[string]st
 	return refs
 }
 
+func podNamePrefixes(snapshot *Snapshot, relatedReplicaSets map[string]struct{}) []string {
+	if snapshot == nil {
+		return nil
+	}
+
+	prefixes := make([]string, 0, len(relatedReplicaSets)+1)
+	switch snapshot.Workload.Kind {
+	case kube.KindDeployment:
+		for name := range relatedReplicaSets {
+			if strings.TrimSpace(name) == "" {
+				continue
+			}
+			prefixes = append(prefixes, name+"-")
+		}
+	case kube.KindStatefulSet:
+		name := strings.TrimSpace(snapshot.Workload.Name)
+		if name != "" {
+			prefixes = append(prefixes, name+"-")
+		}
+	}
+
+	sort.Strings(prefixes)
+	return prefixes
+}
+
 func relatedReplicaSetNames(ctx context.Context, bundle *kube.ClientBundle, workload kube.WorkloadRef) (map[string]struct{}, error) {
 	names := make(map[string]struct{})
 	if workload.Kind != kube.KindDeployment || workload.Selector == "" {
 		return names, nil
+	}
+
+	deployment, err := bundle.Clientset.AppsV1().Deployments(workload.Namespace).Get(ctx, workload.Name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("get deployment %s: %w", workload.Name, err)
 	}
 
 	replicaSets, err := bundle.Clientset.AppsV1().ReplicaSets(workload.Namespace).List(ctx, metav1.ListOptions{
@@ -260,7 +292,7 @@ func relatedReplicaSetNames(ctx context.Context, bundle *kube.ClientBundle, work
 
 	for i := range replicaSets.Items {
 		rs := replicaSets.Items[i]
-		if replicaSetOwnedByDeployment(rs, workload.Name) {
+		if replicaSetOwnedByDeployment(rs, workload.Name, deployment.UID) {
 			names[rs.Name] = struct{}{}
 		}
 	}
@@ -268,16 +300,23 @@ func relatedReplicaSetNames(ctx context.Context, bundle *kube.ClientBundle, work
 	return names, nil
 }
 
-func replicaSetOwnedByDeployment(rs appsv1.ReplicaSet, deploymentName string) bool {
+func replicaSetOwnedByDeployment(rs appsv1.ReplicaSet, deploymentName string, deploymentUID types.UID) bool {
 	for _, owner := range rs.OwnerReferences {
-		if strings.EqualFold(owner.Kind, "Deployment") && owner.Name == deploymentName {
-			return true
+		if !strings.EqualFold(owner.Kind, "Deployment") {
+			continue
 		}
+		if owner.Name != deploymentName {
+			continue
+		}
+		if deploymentUID != "" && owner.UID != "" && owner.UID != deploymentUID {
+			return false
+		}
+		return true
 	}
-	return strings.HasPrefix(rs.Name, deploymentName+"-")
+	return false
 }
 
-func isRelatedEvent(event corev1.Event, snapshot *Snapshot, relatedReplicaSets map[string]struct{}) bool {
+func isRelatedEvent(event corev1.Event, snapshot *Snapshot, relatedReplicaSets map[string]struct{}, podPrefixes []string) bool {
 	kind := normalizeRelatedEventKind(event.InvolvedObject.Kind)
 	name := event.InvolvedObject.Name
 
@@ -294,6 +333,13 @@ func isRelatedEvent(event corev1.Event, snapshot *Snapshot, relatedReplicaSets m
 		}
 		if event.InvolvedObject.UID != "" && event.InvolvedObject.UID == pod.UID {
 			return true
+		}
+	}
+	if kind == "pod" {
+		for i := range podPrefixes {
+			if strings.HasPrefix(name, podPrefixes[i]) {
+				return true
+			}
 		}
 	}
 
